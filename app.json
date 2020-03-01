@@ -1,0 +1,9 @@
+{
+  "name": "Buonacaccia Bot",
+  "description": "A nodeJS app that provides a Telegram bot that helps italian scout/guide boys, girls and leaders dealing with buonacaccia.net",
+  "repository": "https://github.com/Agno94/BuonacacciaBot",
+  "logo": "https://i.imgur.com/BDhCu6g.png",
+  "keywords": ["node", "express", "heroku", "telegram", "bot", "postgresql", "sequelize", "webscraping"],
+  "image": "heroku/nodejs",
+  "addons": ["heroku-postgresql:hobby-dev"],
+}

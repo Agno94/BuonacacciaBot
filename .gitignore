@@ -1,3 +1,8 @@
+pic/*
+*.html
+
+### GITHUB CREATED .gitignore
+
 # Logs
 logs
 *.log
@@ -102,3 +107,8 @@ dist
 
 # TernJS port file
 .tern-port
+
+### Heroku .gitignore
+.DS_Store
+Dockerfile
+docker-compose.yml

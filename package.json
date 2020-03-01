@@ -1,21 +1,14 @@
 {
   "name": "agnobuonacacciabot",
-  "version": "0.1",
+  "version": "0.1.0",
   "description": "A Node.js app that serves as telegram bot for dealing with buonacaccia.net",
-  "engines": {
-    "node": "10.x"
-  },
-  "main": "bot.js",
-  "scripts": {
-    "start": "node bot.js",
-    "test": "node bot.js"
-  },
+  "main": "app.js",
   "dependencies": {
     "axios": "^0.19.2",
     "body-parser": "^1.19.0",
     "cheerio": "^1.0.0-rc.3",
-    "ejs": "^3.0.1",
     "express": "^4.17.1",
+    "ejs": "^3.0.1",
     "node-cron": "^2.0.3",
     "node-telegram-bot-api": "^0.40.0",
     "pg": "^7.18.2",
@@ -26,9 +19,13 @@
     "request": "^2.81.0",
     "tape": "^4.7.0"
   },
+  "scripts": {
+    "start": "node app.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
   "repository": {
     "type": "git",
-    "url": ""
+    "url": "git+https://github.com/Agno94/BuonacacciaBot.git"
   },
   "keywords": [
     "node",
@@ -40,5 +37,10 @@
     "sequelize",
     "webscraping"
   ],
-  "license": "LGPL"
+  "author": "Andrea Agnolin @Agno94 ",
+  "license": "LGPL",
+  "bugs": {
+    "url": "https://github.com/Agno94/BuonacacciaBot/issues"
+  },
+  "homepage": "https://github.com/Agno94/BuonacacciaBot#readme"
 }

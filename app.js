@@ -136,7 +136,7 @@ if (process.env.NODE_ENV === 'production') {
   bot.setWebHook(APP_URL + TG_PATH);
 } else {
   bot = new TelegramBot(TG_TOKEN, { polling: true });
-}
+};
 bot.getMe().then((r) => {
   console.log("My username is ", r.username);
   BOT_USERNAME_REGEXP = RegExp("@" + r.username, "g");
@@ -327,11 +327,11 @@ bot.onText(/\/tutti[ _]*$/, runWithSession(async (msg, match) => {
     bot.sendMessage(msg.chat.id, "help TO DO");
     return;
   }
-  let p = bot.sendMessage(msg.chat.id, TEMPLATES.BetaAlert, TEMPLATES.objBetaAlert)
-  let list = await BCEvent.count({ where: { category: 'eg1' }, attributes: ["regione"], group: ['regione'] });
+  let p = bot.sendMessage(msg.chat.id, TEMPLATES.BetaAlert, TEMPLATES.objBetaAlert);
+  let cat = status.regioneUsedWith[0];
+  let list = await BCEvent.count({ where: { category: cat }, attributes: ["regione"], group: ['regione'] });
   await p;
   if (list.length) {
-    let cat = status.regioneUsedWith[0];
     let message_text = TEMPLATES.MultiSelectionWarning(
       status.regioneUsedFor, cat, list);
     await bot.sendMessage(msg.chat.id, TEMPLATES.AskRegione, TEMPLATES.objAskRegione);
@@ -360,7 +360,7 @@ bot.onText(/\/mostra[ _]*([0-9]*)/, runWithSession(async (msg, match) => {
   if (status.hasEventList) {
     let len = status.eventList.length;
     no_events = Math.min(no_events, len);
-    status.isSendingEventList = true;
+    status.temp.isSendingEventList = true;
     await bot.sendMessage(chatId,
       `Sto per inviare i dettagli di <b>${no_events}</b> eventi`, { parse_mode: 'HTML' })
     try {

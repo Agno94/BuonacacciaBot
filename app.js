@@ -1,24 +1,18 @@
 const TelegramBot = require('node-telegram-bot-api');
-const express = require('express')
+const express = require('express');
 const bodyParser = require('body-parser');
-const path = require('path')
+const path = require('path');
 const cron = require('node-cron');
-const axios = require('axios')
+const axios = require('axios');
 
-// ENVIROMENT
+// ENVIROMENT & SETTING
 
 const PORT = process.env.PORT || 5000;
 const TG_TOKEN = process.env.TELEGRAM_API_TOKEN;
-const TG_PATH = "tg" + TG_TOKEN.substring(12, 20);
+const TG_PATH = "/tg" + TG_TOKEN.substring(12, 20);
 const DATABASE_URL = process.env.DATABASE_URL;
 const APP_URL = process.env.APP_URL || "";
 const MAX_FIND_RESULTS = process.env.MAX_FIND_RESULTS || 8;
-
-const app = express();
-var BOT_USERNAME_REGEXP = "";
-var server = null;
-
-// SETTING
 
 const { REGIONI, ZONES, CATEGORIES, BRANCHE } = require("./data.js");
 
@@ -28,9 +22,17 @@ const TEMPLATES = require("./templates.js")
 
 function wait(ms) {
   return new Promise(r => setTimeout(r, ms));
-}
+};
 
-function today() { return new Date(new Date().toDateString()); }
+function today() { return new Date(new Date().toDateString()); };
+
+function catchAndLogError(e) {
+  console.log("Error", e);
+};
+
+function sendError(msg) {
+  return bot.sendMessage(msg.chat.id, `❌️ An error occurred`);
+};
 
 // DATABASE 
 
@@ -41,14 +43,15 @@ const sequelize = new Sequelize(DATABASE_URL, { define: { timestamps: false } })
 const { BCEvent, BCLog, Watcher, EventReply, ChatSession } = sequelize.import("./db.js");
 
 // WEB-SCAPER / BC's EVENTS COLLECTION
-const EventScraper = require('./scraper.js')
+const EventScraper = require('./scraper.js');
 Scraper = new EventScraper(BCEvent, Sequelize);
 
 // SESSION
-const SessionManager = require('./session.js')
+const SessionManager = require('./session.js');
 Session = new SessionManager(ChatSession);
 
-function runWithSession(F) {// wrapped
+function runWithSession(F) {
+  // Run every fuction adding a session property to the incoming message
   return async function (msg, ...Args) {
     let session = await Session.get(msg.chat.id);
     if (session) {
@@ -56,15 +59,72 @@ function runWithSession(F) {// wrapped
       msg.processed = true;
       await F(msg, ...Args);
       msg.session.update({ status: msg.session.status });
-    }
-  }
-}
+    };
+  };
+};
+
+// CHECK DATABASE AND INIZIALIZE OBJECT
+
+sequelize.authenticate().then(() => {
+  return sequelize.sync({ logging: false });
+}).catch(err => {
+  console.log("Database error:", err);
+  process.exit(1);
+}).then(() => {
+  console.log("Database OK");
+}).then(() => {
+  Scraper.initialize();
+  Session.initialize();
+});
+
+// BOT & EXPRESS SETUP
+
+if (process.env.NODE_ENV === 'production') {
+  bot = new TelegramBot(TG_TOKEN);
+  bot.setWebHook(APP_URL + TG_PATH);
+} else {
+  bot = new TelegramBot(TG_TOKEN, { polling: true });
+};
+
+const app = express();
+var server = null;
+
+app.use(bodyParser.json());
+
+app.set('views', path.join(__dirname, 'ejs'))
+  .set('view engine', 'ejs')
+  .get('/',
+    (req, res) => res.render('simple'))
+  .post(TG_PATH, (req, res) => {
+    bot.processUpdate(req.body);
+    res.sendStatus(200);
+  });
+
+var BOT_USERNAME_REGEXP = "";
+
+bot.getMe().then((r) => {
+  console.log("My username is ", r.username);
+  BOT_USERNAME_REGEXP = RegExp("@" + r.username, "g");
+  bot.on("message", (msg) => {
+    msg.text = msg.text.replace(BOT_USERNAME_REGEXP, "");
+    msg.chat.name = msg.chat.title || msg.chat.firstname;
+  });
+  console.log("Start listening");
+  server = app.listen(PORT);
+}).catch((e) => {
+  console.error("Unable to get information about myself. Exiting");
+  console.log(e);
+  process.exit(1);
+})
 
 // TO DO: add date of collection or reference to events 
 
 // Watcher Send Message
 
+var is_processing_watcher = false;
+
 async function watcherControll(events_list) {
+  is_processing_watcher = true;
   let cache = {};
   for (const event of events_list) {
     let r = event.regione;
@@ -102,54 +162,8 @@ async function watcherControll(events_list) {
     for (const msg in pool) await msg;
   }
   //await wait(200);
+  is_processing_watcher = false;
   console.log("Sent messages for all watchers");
-}
-
-function catchAndLogError(e) {
-  console.log("Error", e);
-}
-
-// CHECK DATABASE AND INIZIALIZE OBJECT
-
-sequelize.authenticate().then(() => {
-  return sequelize.sync({ logging: false });
-}).catch(err => {
-  console.log("Database error:", err);
-  process.exit(1);
-}).then(() => {
-  console.log("Database OK");
-}).then(() => {
-  Scraper.initialize();
-  Session.initialize();
-});
-
-setTimeout(() => {
-  //console.log("not running collection");
-  Scraper.collect('', '').then(watcherControll).catch(catchAndLogError);
-}, 3000);
-
-// BOT SETUP
-
-console.log("NODE_ENV='", process.env.NODE_ENV, "'");
-if (process.env.NODE_ENV === 'production') {
-  bot = new TelegramBot(TG_TOKEN);
-  bot.setWebHook(APP_URL + TG_PATH);
-} else {
-  bot = new TelegramBot(TG_TOKEN, { polling: true });
-};
-bot.getMe().then((r) => {
-  console.log("My username is ", r.username);
-  BOT_USERNAME_REGEXP = RegExp("@" + r.username, "g");
-  bot.on("message", (msg) => {
-    msg.text = msg.text.replace(BOT_USERNAME_REGEXP, "");
-    msg.chat.name = msg.chat.title || msg.chat.firstname;
-  });
-  console.log("Start listening");
-  server = app.listen(PORT);
-});
-
-function sendError(msg) {
-  return bot.sendMessage(msg.chat.id, `❌️ An error occurred`);
 }
 
 bot.onText(/\/start/, runWithSession(
@@ -382,7 +396,7 @@ bot.onText(/\/mostra[ _]*([0-9]*)/, runWithSession(async (msg, match) => {
     } catch (e) {
       sendError(msg);
       console.log("Error showing results:", e);
-    } finally {}
+    } finally { }
     status.hasEventList = Boolean(status.eventList.length);
     delete status.temp.isSendingEventList;
     if (status.hasEventList)
@@ -419,9 +433,9 @@ bot.onText(/\/promemoria[ _]*$/, runWithSession((msg, match) => {
 function signalHandler(SIGNAL) {
   console.log("Received", SIGNAL);
   Scraper.pause();
+  server.close();
   bot.stopPolling();
   bot.closeWebHook();
-  server.close();
   wait(1000).then(
     async () => { await Scraper.finish(); }
   ).then(
@@ -429,10 +443,20 @@ function signalHandler(SIGNAL) {
   ).then(
     () => { console.log("Sessions saved"); },
     (e) => { console.log("Error", e); }
+  ).then(
+    async () => {
+      while (is_processing_watcher) {
+        console.log("Waiting for messages to be sent");
+        await wait(1000);
+      };
+    }
   ).then(() => {
     console.log("Quit!");
     process.exit();
   });
+  wait(20000).then(() => {
+    process.exit(10);
+  })
   return 1;
 }
 
@@ -462,11 +486,12 @@ cron.schedule('0 10 6,9,12,18,21 * * 1-6', () => {
 
 if ((process.env.NODE_ENV === 'production') && (APP_URL)) {
   cron.schedule('0 */20 * * * *', () => {
-    axios.get(APP_URL).then(response => {
-      console.log("Keep up: OK");
-    }, error => {
-      console.log("Keep up: Error:", error);
-    });
+    if (process.env.KEEP_UP) {
+      console.log(`Keep up: Request ${APP_URL} to avoid sleep`);
+      axios.get(APP_URL).catch(
+        error => { console.log("Keep up: Error:", error); }
+      );
+    }
   }, {
     timezone: "Europe/Rome"
   });
@@ -479,15 +504,8 @@ cron.schedule('0 0 1 * * *', async () => {
   timezone: "Europe/Rome"
 });
 
-// ESPRESS SETUP
-
-app.use(bodyParser.json());
-
-app.set('views', path.join(__dirname, 'ejs'))
-  .set('view engine', 'ejs')
-  .get('/',
-    (req, res) => res.render('simple'))
-  .post('/' + TG_PATH, (req, res) => {
-    bot.processUpdate(req.body);
-    res.sendStatus(200);
-  });
+if (process.env.NODE_ENV !== 'production') {
+  setTimeout(() => {
+    Scraper.collect('', '').then(watcherControll).catch(catchAndLogError);
+  }, 3000);
+};

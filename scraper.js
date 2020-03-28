@@ -25,14 +25,15 @@ BC_EVENTDETAIL_URL = "https://buonacaccia.net/event.aspx"
 
 class EventScraper {
 
-    constructor(BCEvent, Sequelize) {
+    constructor(BCEvent, Sequelize, profile = true) {
         this.Op = Sequelize.Op;
         this.BCEvent = BCEvent;
         this.activeEvents = new Set();
         this.is_paused = false;
         this.is_collection_running = false;
-        this.is_collection_running = false;
+        this.is_collection_scheduled = false;
         this.is_ready = false;
+        this.profiler = { on: profile };
         this.today = new Date(new Date().toDateString());
     }
 
@@ -46,12 +47,13 @@ class EventScraper {
                 startdate: { [this.Op.gte]: this.today }
             },
             attributes: ['bcId']
-        }).then((r) =>
-            r.map((x) => x.bcId)
+        }).then(
+            (r) => r.map((x) => x.bcId)
         ).then((r) => {
-            r.forEach((item) => {
-                this.activeEvents.add(item);
-            })
+            r.forEach(
+                (item) => {
+                    this.activeEvents.add(item);
+                })
             this.is_ready = true;
         }).catch(e => {
             console.log("Inizialing stored active event set failed");
@@ -111,7 +113,7 @@ class EventScraper {
                             category_human ? CATEGORIES.BCGRID2CODE[category_human] :
                                 CATEGORIES.IMG2CODE[category_branca];
                         if (!entry.category) {
-                            throw "Unrecognized category"+category_human
+                            throw "Unrecognized category" + category_human
                         }
                     }
                     // GET REGIONE
@@ -144,7 +146,7 @@ class EventScraper {
             }
         });
         this.log(`EventGrid: parser found ${entry_list.length} events`);
-        this.log("EventGrid: Parse time", new Date() - parsing_start_time, "ms");
+        this.profiler.EG_parse = new Date() - parsing_start_time
         return entry_list
     }
 
@@ -160,7 +162,7 @@ class EventScraper {
     async finish() {
         while (this.is_collection_running) {
             this.log("Waiting for a running collection to be finished")
-            await wait(500);
+            await wait(1000);
         }
     }
 
@@ -179,7 +181,7 @@ class EventScraper {
     }
 
     async _do_request_and_retry(request, tries, timeout, msg) {
-        const accepter_errors = new Set(["ECONNABORTED", "ETIMEDOUT"]);
+        const accepted_errors = new Set(["ECONNABORTED", "ETIMEDOUT"]);
         let still_to_try = tries || 1;
         request.timeout = timeout || 0;
         let token = { exec: null, done: false };
@@ -204,15 +206,15 @@ class EventScraper {
                 }
             } catch (e) {
                 await wait(5);
-                if (!accepter_errors.has(e.code) && !token.cancelled) {
+                if (!accepted_errors.has(e.code) && !token.cancelled) {
                     this.log(msg || '', `Unhandeled error`, e)
-                    return "ERROR";
+                    throw "ERROR";
                 }
             }
             await wait(500);
             this.log(msg || '', `Try #${tries - still_to_try} failed`)
         }
-        return "FAILED_EVERY_TIMES";
+        throw "FAILED_EVERY_TIMES";
     }
 
     async _event_detail(entry, index, list) {
@@ -246,12 +248,12 @@ class EventScraper {
 
     async collect(cat, reg) {
         await this._wait_and_set_params(cat, reg);
-        this.start_time = new Date(); //PROFILER
-        // GET EVENT GRID PAGE
         if (this.is_paused) {
             this.log("Collections are paused, aborting");
             return []
         }
+        this.start_time = new Date(); //PROFILER
+        // GET EVENT GRID PAGE
         let [err, data] = await this._do_request_and_retry({
             method: "get",
             params: {
@@ -266,7 +268,7 @@ class EventScraper {
             return [];
         }
         this.log(`EventGrid: Recieved a ${data.length} long response`);
-        this.log("EventGrid: HTTP time", new Date() - this.start_time); //PROFILER
+        this.profiler.EG_fetch = new Date() - this.start_time;
         // PARSE EVENT GRID PAGE
         let event_list = this._event_list_parser(data);
         // FOR EACH EVENT GET EVENT'S DETAIL
@@ -280,15 +282,15 @@ class EventScraper {
         for (const entry of promises) {
             await entry;
         };
-        let colletionDate = new Date();
         event_list = event_list.filter(
             entry => {
-                entry.colletiondate = colletionDate;
-                return Boolean(entry && entry.bcId)
+                if (!entry) { return false };
+                entry.colletiondate = this.start_time;
+                return Boolean(entry.bcId)
             }
         );
         this.log(`EventDetail: ${event_list.length} events`);
-        this.log("EventDetail: time ", new Date() - detail_start_time, ` ms`); //PROFILER
+        this.profiler.ED_time = new Date() - detail_start_time
         // UPDATE DATABASE
         let database_start_time = new Date();
         let ok = await this.BCEvent.bulkCreate(event_list).then(
@@ -300,27 +302,19 @@ class EventScraper {
                 this.log(JSON.stringify(event_list));
                 return [];
             }).then((r) => {
-                this.log("Database: time",
-                    new Date() - database_start_time, " ms"); //PROFILER
-                return r;
-            }).then((r) => {
+                this.profiler.DB_time = new Date() - database_start_time;
                 r.forEach((item) => {
                     this.activeEvents.add(item);
                 })
                 return Boolean(r);
             }).catch((e) => {
                 this.log("Error: Update active event set failed", e);
-            }).then((r) => {
-                this.log("Collection total time",
-                    new Date() - this.start_time); //PROFILER
-                this.is_collection_running = false;
-                return r;
-            });
+            })
+        this.profiler.total_time = new Date() - this.start_time;
+        this.log("Time in milliseconds: ", this.profiler);
+        this.is_collection_running = false;
         return (ok && event_list) || [];
         // TO DO : CALL WATCHER CONTROL
-        //}).catch(error => {
-        //    this.log("Collect error:", error);
-        //});
     }
 }
 

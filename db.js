@@ -36,7 +36,7 @@ module.exports = function (sequelize, DateTypes) {
             type: Sequelize.ENUM,
             values: sequelize.REGIONI_CHOICES
         },
-        title: { type: Sequelize.TEXT(100) },
+        title: { type: Sequelize.STRING(100) },
         startdate: { type: Sequelize.DATE },
         enddate: { type: Sequelize.DATE },
         subscriptiondate: { type: Sequelize.DATE },

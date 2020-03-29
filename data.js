@@ -437,4 +437,10 @@ CATEGORIES.LIST.forEach(element => {
 });
 CATEGORIES.SET = new Set(CATEGORIES.CHOICES);
 
-module.exports = { REGIONI, ZONES, CATEGORIES, BRANCHE }
+const SPECIAL_COLLECTIONS = [
+    { c: "eg5", r: "" },
+    { c: "eg2", r: "" },
+    { c: "", r: "V" },
+];
+
+module.exports = { REGIONI, ZONES, CATEGORIES, BRANCHE, SPECIAL_COLLECTIONS}

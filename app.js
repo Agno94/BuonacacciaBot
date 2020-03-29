@@ -14,7 +14,7 @@ const DATABASE_URL = process.env.DATABASE_URL;
 const APP_URL = process.env.APP_URL || "";
 const MAX_FIND_RESULTS = process.env.MAX_FIND_RESULTS || 8;
 
-const { REGIONI, ZONES, CATEGORIES, BRANCHE } = require("./data.js");
+const { REGIONI, ZONES, CATEGORIES, BRANCHE, SPECIAL_COLLECTIONS } = require("./data.js");
 
 const TEMPLATES = require("./templates.js")
 
@@ -465,21 +465,14 @@ process.on("SIGTERM", signalHandler);
 
 // CRON SETUP
 
-cron.schedule('0 10 6,9,12,18,21 * * 1-6', () => {
+cron.schedule('0 10 6,9,12,18,21 * * 1-6', async () => {
   console.log("Running scheduled collection ...");
-  delay = Math.floor(Math.random() * 6 * 1000 + 1) * 100
-  setTimeout(() => {
-    Scraper.collect('', '').then(watcherControll).catch(catchAndLogError);
-  }, delay);
-  setTimeout(() => {
-    Scraper.collect('eg5', '').then(watcherControll).catch(catchAndLogError);
-  }, delay + 120 * 1000);
-  setTimeout(() => {
-    Scraper.collect('eg2', '').then(watcherControll).catch(catchAndLogError);
-  }, delay + 180 * 1000);
-  setTimeout(() => {
-    Scraper.collect('', 'V').then(watcherControll).catch(catchAndLogError);
-  }, delay + 240 * 1000);
+  await Scraper.collect('', '').then(watcherControll).catch(catchAndLogError);
+  for (const p of SPECIAL_COLLECTIONS) {
+    let job = Scraper.collect(p.c, p.r);
+    job.then(watcherControll).catch(catchAndLogError);
+    await job;
+  }
 }, {
   timezone: "Europe/Rome"
 });

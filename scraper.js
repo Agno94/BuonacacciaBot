@@ -42,7 +42,7 @@ class EventScraper {
     }
 
     initialize() {
-        this.BCEvent.findAll({
+        return this.BCEvent.findAll({
             where: {
                 startdate: { [this.Op.gte]: this.today }
             },

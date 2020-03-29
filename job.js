@@ -20,15 +20,11 @@ Scraper = new EventScraper(BCEvent, Sequelize);
 function signalHandler(SIGNAL) {
     console.log("Received", SIGNAL);
     Scraper.pause();
-    wait(1000).then(
-        async () => { await Scraper.finish(); }
-    ).finally(() => {
+    Scraper.finish().finally(() => {
         console.log("Exit!");
         process.exit();
     });
-    wait(20000).then(() => {
-        process.exit(10);
-    });
+    setTimeout(() => process.exit(10), 20000);
     return 1;
 }
 
@@ -37,18 +33,23 @@ process.on("SIGTERM", signalHandler);
 
 // JOB
 
-let promise = sequelize.authenticate().then(() => {
-    return sequelize.sync({ logging: false });
-}).catch(err => {
-    console.log("Database error:", err);
-    process.exit(1);
-}).then(() => {
-    console.log("Database OK");
-    Scraper.initialize();
-});
+let job = sequelize.authenticate().then(
+    async () => {
+        await sequelize.sync({ logging: false })
+    }
+).then(
+    async () => {
+        console.log("Database OK");
+        await Scraper.initialize();
+    }
+).catch(
+    err => {
+        console.log("Database error:", err);
+        process.exit(1);
+    }
+);
 
-
-promise = promise.then(
+job = job.then(
     async () => await Scraper.collect('', '')
 );
 
@@ -59,8 +60,7 @@ const other_collections = [
 ];
 
 for (const p of other_collections) {
-    console.log(p);
-    promise = promise.then(
+    job = job.then(
         async (r) => {
             l = await Scraper.collect(p.c, p.r);
             return r.concat(l);
@@ -68,9 +68,9 @@ for (const p of other_collections) {
     );
 };
 
-promise.catch(
+job.catch(
     (e) => {
-        console.log("Error during collection", e);
+        console.error("Error during collection", e);
         process.exit(1);
     }
 ).then(
@@ -84,7 +84,7 @@ promise.catch(
         console.log("Wake up app to send watchers");
         process.exit(0);
     }, (e) => {
-        console.log("Http request error:", e);
+        console.error("Http request error:", e);
         process.exit(2);
     }
 );

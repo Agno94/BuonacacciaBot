@@ -1,11 +1,12 @@
-var hour = new Date(new Date().toLocaleString("en-UK", { timeZone: "Europe/Rome" })).getHours();
-if (hour % 3) {
+const { COLLECTIONS } = require("./data");
+
+var italian_hour = new Date(new Date().toLocaleString("en-US", { timeZone: "Europe/Rome" })).getHours();
+if (!COLLECTIONS.EXEC_TIME.has(italian_hour)) {
     console.log("Running every 3 hours. Exit");
     process.exit(0);
 }
 
 const axios = require('axios');
-const { SPECIAL_COLLECTIONS } = require("./data");
 
 // ENVIROMENT & SETTING
 
@@ -60,7 +61,7 @@ job = job.then(
     async () => await Scraper.collect('', '')
 );
 
-for (const p of SPECIAL_COLLECTIONS) {
+for (const p of COLLECTIONS.SPECIALS) {
     job = job.then(
         async (r) => {
             l = await Scraper.collect(p.c, p.r);

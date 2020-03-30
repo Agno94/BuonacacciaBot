@@ -385,7 +385,7 @@ REGIONI.COMMAND2CODE = {};
 
 REGIONI.LIST.forEach(element => {
     REGIONI[element.code] = element;
-    element.command = element.human.replace(/[' ]/g,"").toLowerCase();
+    element.command = element.human.replace(/[' ]/g, "").toLowerCase();
 
     // ZONES[element.zone].REGIONI.push(element.code);
     ZONES[element.zone].REGIONI.push(element);
@@ -396,8 +396,8 @@ REGIONI.LIST.forEach(element => {
     REGIONI.COMMAND2CODE[element.command] = element.code;
     REGIONI.CHOICES.push(element.code);
     REGIONI.BCCODE2CODE[element.bccode] = element.code;
-    
-    
+
+
     // ZONES.REGIONI[element.zone].push(element.code);
 
     // REGIONI.CODE2BCCODE[element.code] = element.bccode;
@@ -437,10 +437,14 @@ CATEGORIES.LIST.forEach(element => {
 });
 CATEGORIES.SET = new Set(CATEGORIES.CHOICES);
 
-const SPECIAL_COLLECTIONS = [
-    { c: "eg5", r: "" },
-    { c: "eg2", r: "" },
-    { c: "", r: "V" },
-];
+const COLLECTIONS = {
+    SPECIALS: [
+        { c: "eg5", r: "" },
+        { c: "eg2", r: "" },
+        { c: "", r: "V" },
+    ],
+    EXEC_TIME: new Set([6, 9, 12, 15, 18, 21]),
+}
 
-module.exports = { REGIONI, ZONES, CATEGORIES, BRANCHE, SPECIAL_COLLECTIONS}
+
+module.exports = { REGIONI, ZONES, CATEGORIES, BRANCHE, COLLECTIONS }

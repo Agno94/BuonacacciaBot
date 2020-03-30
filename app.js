@@ -14,7 +14,7 @@ const DATABASE_URL = process.env.DATABASE_URL;
 const APP_URL = process.env.APP_URL || "";
 const MAX_FIND_RESULTS = process.env.MAX_FIND_RESULTS || 8;
 
-const { REGIONI, ZONES, CATEGORIES, BRANCHE, SPECIAL_COLLECTIONS } = require("./data.js");
+const { REGIONI, ZONES, CATEGORIES, BRANCHE, COLLECTIONS } = require("./data.js");
 
 const TEMPLATES = require("./templates.js")
 
@@ -465,16 +465,17 @@ process.on("SIGTERM", signalHandler);
 
 // CRON SETUP
 
-cron.schedule('0 10 6,9,12,18,21 * * 1-6', async () => {
+cron.schedule('0 10 * * * *', async () => {
+  var italian_hour = new Date(new Date().toLocaleString("en-US", { timeZone: "Europe/Rome" })).getHours();
+  console.log(italian_hour);
+  if (!COLLECTIONS.EXEC_TIME.has(italian_hour)) return;
   console.log("Running scheduled collection ...");
   await Scraper.collect('', '').then(watcherControll).catch(catchAndLogError);
-  for (const p of SPECIAL_COLLECTIONS) {
+  for (const p of COLLECTIONS.SPECIALS) {
     let job = Scraper.collect(p.c, p.r);
     job.then(watcherControll).catch(catchAndLogError);
     await job;
   }
-}, {
-  timezone: "Europe/Rome"
 });
 
 if ((process.env.NODE_ENV === 'production') && (APP_URL)) {
@@ -485,8 +486,6 @@ if ((process.env.NODE_ENV === 'production') && (APP_URL)) {
         error => { console.log("Keep up: Error:", error); }
       );
     }
-  }, {
-    timezone: "Europe/Rome"
   });
 }
 

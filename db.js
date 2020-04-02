@@ -9,16 +9,20 @@ module.exports = function (sequelize, DateTypes) {
     sequelize.CATEGORIES_CHOICES = CATEGORIES.CHOICES;
 
     const BCLog = sequelize.define('bc_log', {
-        category: {
+        status: {
             type: Sequelize.ENUM,
             values: [
-                'OK', 'DOWN', 'NET_ERROR', 'SCRAP_ERROR'
+                'OK', 'INCOMPLETE', 'DOWN', 'NET_ERROR', 'PARSE_ERROR', 'DB_ERROR', 'OTHER_ERROR'
             ]
         },
         date: {
             type: Sequelize.DATE,
             defaultValue: Sequelize.NOW
         },
+        special: {
+            type: Sequelize.BOOLEAN,
+            defaultValue: false
+        }
     }, {});
 
     const BCEvent = sequelize.define('bc_event', {
@@ -43,7 +47,7 @@ module.exports = function (sequelize, DateTypes) {
         endsubscriptiondate: { type: Sequelize.DATE },
         cost: { type: Sequelize.SMALLINT },
         location: { type: Sequelize.STRING(50) },
-        colletiondate: { type: Sequelize.DATE },
+        collectiondate: { type: Sequelize.DATE },
         hasBeenWatched: {
             type: Sequelize.BOOLEAN,
             defaultValue: false,

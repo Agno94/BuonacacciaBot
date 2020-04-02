@@ -44,7 +44,7 @@ const { BCEvent, BCLog, Watcher, EventReply, ChatSession } = sequelize.import(".
 
 // WEB-SCAPER / BC's EVENTS COLLECTION
 const EventScraper = require('./scraper.js');
-Scraper = new EventScraper(BCEvent, Sequelize);
+Scraper = new EventScraper(BCEvent, BCLog, Sequelize);
 
 // SESSION
 const SessionManager = require('./session.js');
@@ -442,7 +442,7 @@ function signalHandler(SIGNAL) {
     async () => { await Session.saveAll(); }
   ).then(
     () => { console.log("Sessions saved"); },
-    (e) => { console.log("Error", e); }
+    (e) => { console.error("Error", e); }
   ).then(
     async () => {
       while (is_processing_watcher) {

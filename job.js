@@ -2,7 +2,7 @@ const { COLLECTIONS } = require("./data");
 
 var italian_hour = new Date(new Date().toLocaleString("en-US", { timeZone: "Europe/Rome" })).getHours();
 if (!COLLECTIONS.EXEC_TIME.has(italian_hour)) {
-    console.log("Running every 3 hours. Exit");
+    console.log("Running only on scheduled time! Exit");
     process.exit(0);
 }
 
@@ -21,7 +21,7 @@ const sequelize = new Sequelize(DATABASE_URL, { define: { timestamps: false } })
 const { BCEvent, BCLog, Watcher, EventReply, ChatSession } = sequelize.import("./db.js");
 
 const EventScraper = require('./scraper.js');
-Scraper = new EventScraper(BCEvent, Sequelize);
+Scraper = new EventScraper(BCEvent, BCLog, Sequelize);
 
 // SIGNAL HANDLER
 
@@ -77,15 +77,15 @@ job.catch(
     }
 ).then(
     async (r) => {
-        if (r.length) {
-            return await axios.get(APP_URL)
+        if ((r.length) && APP_URL) {
+            return await axios.get(APP_URL).then(
+                () => console.log("Wake up app to send watchers")
+            )
         };
     }
 ).then(
-    (r) => {
-        console.log("Wake up app to send watchers");
-        process.exit(0);
-    }, (e) => {
+    (r) => process.exit(0),
+    (e) => {
         console.error("Http request error:", e);
         process.exit(2);
     }

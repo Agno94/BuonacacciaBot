@@ -17,9 +17,11 @@ const REGEXP_SubsStart =
     /MainContent_EventFormView_lbSubsFrom[^>]*>[ ]*([0-9]*)\/([0-9]*)\/([0-9]*)[ ]*</;
 const REGEXP_SubsEnd =
     /MainContent_EventFormView_lbSubsTo[^>]*>[ ]*([0-9]*)\/([0-9]*)\/([0-9]*)[ ]*</;
+const REGEXP_TEST = /Nuova Iscrizione/;
 
-const BC_EVENTSGRID_URL = "https://buonacaccia.net/Events.aspx"
-const BC_EVENTDETAIL_URL = "https://buonacaccia.net/event.aspx"
+const BC_EVENTSGRID_URL = "https://buonacaccia.net/Events.aspx";
+const BC_EVENTDETAIL_URL = "https://buonacaccia.net/event.aspx";
+const BC_TEST_URL = "https://buonacaccia.net/Subscribe.aspx";
 
 class EventScraper {
 
@@ -248,6 +250,23 @@ class EventScraper {
             })
     }
 
+    async _bc_test() {
+        await this._do_request_and_retry({
+            method: "get",
+            url: BC_TEST_URL,
+        }, 3, 5000, "Test page").then( ([err,data]) => {
+            if (!REGEXP_TEST.exec(data)) {
+                this.log(`Test page ${BC_TEST_URL} is different than expected - Aborting!`);
+                this.collection.exit_status = "BC_ERROR";
+                throw Error("BC_ERROR");
+            }
+            this.log("Test page is OK!");
+        }, err => {
+            this.collection.exit_status = "NET_ERROR";
+            throw Error("NET_ERROR");
+        });
+    }
+
     async _bc_event_grid() {
         // GET EVENT GRID PAGE
         let [err, data] = await this._do_request_and_retry({
@@ -262,8 +281,6 @@ class EventScraper {
             this.log("Unable to retrieve the main events' grid's page - Aborting");
             this.collection.exit_status = "NET_ERROR";
             throw Error("NET_ERROR");
-            //this.is_collection_running = false;
-            //return [];
         }
         this.log(`EventGrid: Recieved a ${data.length} long response`);
         this.collection.time.EGfetch = new Date() - this.start_time;
@@ -312,16 +329,12 @@ class EventScraper {
                 r.forEach((x) => {
                     this.activeEvents.add(x.bcId);
                 });
-                // return r.map((x) => x.bcId);
                 return r.length
             }, e => {
                 console.error("Database update error", e.name, e.message);
                 this.exit_status = "DB_ERROR";
                 throw "DB_ERROR";
             });
-        // IDList.forEach((item) => {
-
-        // });
         this.collection.number_db_events = len;
     }
 
@@ -338,6 +351,7 @@ class EventScraper {
             time: {},
         };
         try {
+            await this._bc_test();
             await this._bc_event_grid();
             await this._bc_event_detail();
             await this._update_database().catch((e) => console.log(e));
@@ -348,15 +362,14 @@ class EventScraper {
             }
         } catch (e) {
             this.collection.event_list = [];
-            console.error("Error", this.collection.exit_status);
+            console.error("Error", this.collection.exit_status, e);
         }
         let event_list = this.collection.event_list;
-        // delete this.collection.event_list;
-        // console.log(this.collection);
         if (!this.is_paused || this.collection.number_db_events) {
             await this.BCLog.create({
                 status: this.collection.exit_status,
-                special: Boolean(cat || reg)
+                special: Boolean(cat || reg),
+                events: this.collection.number_db_events || 0,
             }).then((r) => {
                 this.log(`Collection entry log added with status ${r.status}`);
             }, (e) => {

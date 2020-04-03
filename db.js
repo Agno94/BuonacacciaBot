@@ -12,7 +12,7 @@ module.exports = function (sequelize, DateTypes) {
         status: {
             type: Sequelize.ENUM,
             values: [
-                'OK', 'INCOMPLETE', 'DOWN', 'NET_ERROR', 'PARSE_ERROR', 'DB_ERROR', 'OTHER_ERROR'
+                'OK', 'INCOMPLETE', 'BC_ERROR', 'NET_ERROR', 'PARSE_ERROR', 'DB_ERROR', 'OTHER_ERROR'
             ]
         },
         date: {
@@ -22,6 +22,10 @@ module.exports = function (sequelize, DateTypes) {
         special: {
             type: Sequelize.BOOLEAN,
             defaultValue: false
+        },
+        events: {
+            type: Sequelize.SMALLINT,
+            defaultValue: 0,
         }
     }, {});
 

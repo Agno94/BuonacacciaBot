@@ -27,7 +27,7 @@ function wait(ms) {
 function today() { return new Date(new Date().toDateString()); };
 
 function catchAndLogError(e) {
-  console.log("Error", e);
+  console.error("Error", e.message, e);
 };
 
 function sendError(msg) {
@@ -117,13 +117,24 @@ bot.getMe().then((r) => {
   process.exit(1);
 })
 
-// TO DO: add date of collection or reference to events 
+// MIGHT BE TO DO: add relation (one2many?) between events and collection log
 
 // Watcher Send Message
 
+async function watcherCheck() {
+  let events_list = await BCEvent.findAll({
+    where: { hasBeenWatched: false },
+  }).catch((e) => {
+    console.error("Selection of unwatched events failed", e.message);
+    return [];
+  });
+  console.log(`Found ${events_list.length} events`);
+  return events_list
+}
+
 var is_processing_watcher = false;
 
-async function watcherControll(events_list) {
+async function watcherSend(events_list) {
   is_processing_watcher = true;
   let cache = {};
   for (const event of events_list) {
@@ -160,6 +171,11 @@ async function watcherControll(events_list) {
     );
     await wait(1000);
     for (const msg in pool) await msg;
+    BCEvent.update({
+      hasBeenWatched: true,
+    }, {
+      where: { bcId: event.bcId }
+    }).catch(catchAndLogError);
   }
   //await wait(200);
   is_processing_watcher = false;
@@ -470,10 +486,10 @@ cron.schedule('0 10 * * * *', async () => {
   console.log(italian_hour);
   if (!COLLECTIONS.EXEC_TIME.has(italian_hour)) return;
   console.log("Running scheduled collection ...");
-  await Scraper.collect('', '').then(watcherControll).catch(catchAndLogError);
+  await Scraper.collect('', '').then(watcherSend).catch(catchAndLogError);
   for (const p of COLLECTIONS.SPECIALS) {
     let job = Scraper.collect(p.c, p.r);
-    job.then(watcherControll).catch(catchAndLogError);
+    job.then(watcherSend).catch(catchAndLogError);
     await job;
   }
 });
@@ -496,8 +512,10 @@ cron.schedule('0 0 1 * * *', async () => {
   timezone: "Europe/Rome"
 });
 
+wait(1000).then(watcherCheck).then(watcherSend);
+
 if (process.env.NODE_ENV !== 'production') {
   setTimeout(() => {
-    Scraper.collect('', '').then(watcherControll).catch(catchAndLogError);
-  }, 3000);
+    Scraper.collect('', '').then(watcherSend).catch(catchAndLogError);
+  }, 10000);
 };

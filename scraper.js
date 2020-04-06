@@ -254,7 +254,7 @@ class EventScraper {
         await this._do_request_and_retry({
             method: "get",
             url: BC_TEST_URL,
-        }, 3, 5000, "Test page").then( ([err,data]) => {
+        }, 3, 5000, "Test page").then(([err, data]) => {
             if (!REGEXP_TEST.exec(data)) {
                 this.log(`Test page ${BC_TEST_URL} is different than expected - Aborting!`);
                 this.collection.exit_status = "BC_ERROR";
@@ -381,6 +381,38 @@ class EventScraper {
         delete this.collection;
         this.is_collection_running = false;
         return event_list;
+    }
+
+    async get_last_collection(last = true, successful = true, unempty = false) {
+        let response = {};
+        let onSuccess = (r) => ({ date: r[0].date, status: r[0].status });
+        let onError = (e) => console.error("Error", e.message);
+        // let query = {};
+        if (last) {
+            response.last = await this.BCLog.findAll({
+                where: { special: false },
+                attributes: ['date', 'status'],
+                order: [['date', 'DESC']],
+                limit: 1
+            }).then(onSuccess).catch(onError);
+        };
+        if (successful) {
+            response.successful = await this.BCLog.findAll({
+                where: { special: false, status: 'OK' },
+                attributes: ['date', 'status'],
+                order: [['date', 'DESC']],
+                limit: 1
+            }).then(onSuccess).catch(onError);
+        };
+        if (unempty) {
+            response.unempty = await this.BCLog.findAll({
+                where: { special: false, events: { [Op.gt]: 0 } },
+                attributes: ['date', 'status'],
+                order: [['date', 'DESC']],
+                limit: 1
+            }).then(onSuccess).catch(onError);
+        };
+        return response
     }
 }
 

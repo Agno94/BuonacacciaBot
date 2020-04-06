@@ -12,7 +12,11 @@ const TG_TOKEN = process.env.TELEGRAM_API_TOKEN;
 const TG_PATH = "/tg" + TG_TOKEN.substring(12, 20);
 const DATABASE_URL = process.env.DATABASE_URL;
 const APP_URL = process.env.APP_URL || "";
+
 const MAX_FIND_RESULTS = process.env.MAX_FIND_RESULTS || 8;
+const IS_PRODUCTION = (process.env.NODE_ENV === 'production');
+const SCRAP_FORCE_TIME =
+  process.env.SCRAP_FORCE_TIME || (IS_PRODUCTION && 12 * 3600) || 10;
 
 const { REGIONI, ZONES, CATEGORIES, BRANCHE, COLLECTIONS } = require("./data.js");
 
@@ -79,7 +83,7 @@ sequelize.authenticate().then(() => {
 
 // BOT & EXPRESS SETUP
 
-if (process.env.NODE_ENV === 'production') {
+if (IS_PRODUCTION) {
   bot = new TelegramBot(TG_TOKEN);
   bot.setWebHook(APP_URL + TG_PATH);
 } else {
@@ -494,7 +498,7 @@ cron.schedule('0 10 * * * *', async () => {
   }
 });
 
-if ((process.env.NODE_ENV === 'production') && (APP_URL)) {
+if (IS_PRODUCTION && APP_URL) {
   cron.schedule('0 */20 * * * *', () => {
     if (process.env.KEEP_UP) {
       console.log(`Keep up: Request ${APP_URL} to avoid sleep`);
@@ -512,10 +516,19 @@ cron.schedule('0 0 1 * * *', async () => {
   timezone: "Europe/Rome"
 });
 
-wait(1000).then(watcherCheck).then(watcherSend);
+job = wait(1000).then(watcherCheck).then(watcherSend);
 
-if (process.env.NODE_ENV !== 'production') {
-  setTimeout(() => {
+setTimeout(async () => {
+  // If no collection has been performed in the last SCRAP_FORCE_TIME seconds
+  //  then one is ran now
+  collections = await Scraper.get_last_collection(true, true, false);
+  await job;
+  delta_last = (new Date() - collections.last.date) / 1000;
+  delta_success = (new Date() - collections.successful.date) / 1000;
+  if (
+    (delta_last > SCRAP_FORCE_TIME) ||
+    (delta_success > 2 * SCRAP_FORCE_TIME)
+  ) {
     Scraper.collect('', '').then(watcherSend).catch(catchAndLogError);
-  }, 10000);
-};
+  }
+}, 1000);

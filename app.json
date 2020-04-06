@@ -5,5 +5,5 @@
   "logo": "https://i.imgur.com/BDhCu6g.png",
   "keywords": ["node", "express", "heroku", "telegram", "bot", "postgresql", "sequelize", "webscraping"],
   "image": "heroku/nodejs",
-  "addons": ["heroku-postgresql:hobby-dev"],
+  "addons": ["heroku-postgresql:hobby-dev", "scheduler:standard"],
 }

@@ -485,18 +485,20 @@ process.on("SIGTERM", signalHandler);
 
 // CRON SETUP
 
-cron.schedule('0 10 * * * *', async () => {
-  var italian_hour = new Date(new Date().toLocaleString("en-US", { timeZone: "Europe/Rome" })).getHours();
-  console.log(italian_hour);
-  if (!COLLECTIONS.EXEC_TIME.has(italian_hour)) return;
-  console.log("Running scheduled collection ...");
-  await Scraper.collect('', '').then(watcherSend).catch(catchAndLogError);
-  for (const p of COLLECTIONS.SPECIALS) {
-    let job = Scraper.collect(p.c, p.r);
-    job.then(watcherSend).catch(catchAndLogError);
-    await job;
-  }
-});
+if (process.env.APP_SCHEDULE_COLLECTION) {
+  cron.schedule('0 10 * * * *', async () => {
+    var italian_hour = new Date(new Date().toLocaleString("en-US", { timeZone: "Europe/Rome" })).getHours();
+    console.log(italian_hour);
+    if (!COLLECTIONS.EXEC_TIME.has(italian_hour)) return;
+    console.log("Running scheduled collection ...");
+    await Scraper.collect('', '').then(watcherSend).catch(catchAndLogError);
+    for (const p of COLLECTIONS.SPECIALS) {
+      let job = Scraper.collect(p.c, p.r);
+      job.then(watcherSend).catch(catchAndLogError);
+      await job;
+    }
+  });
+};
 
 if (IS_PRODUCTION && APP_URL) {
   cron.schedule('0 */20 * * * *', () => {

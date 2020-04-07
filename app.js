@@ -534,5 +534,7 @@ startJobBot.then(async () => {
     ((new Date() - collections.successful.date) > 2000 * SCRAP_FORCE_TIME)
   ) {
     Scraper.collect('', '').then(watcherSend).catch(catchAndLogError);
+  } else {
+    console.log(`A collection has been run ${(new Date() - collections.last.date) / 1000}s ago`);
   }
 })

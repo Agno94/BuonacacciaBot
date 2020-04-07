@@ -385,7 +385,7 @@ class EventScraper {
 
     async get_last_collection(last = true, successful = true, unempty = false) {
         let response = {};
-        let onSuccess = (r) => ({ date: r[0].date, status: r[0].status });
+        let onSuccess = (r) => (r[0] && { date: r[0].date, status: r[0].status });
         let onError = (e) => console.error("Error", e.message);
         // let query = {};
         if (last) {

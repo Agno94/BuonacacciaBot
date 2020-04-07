@@ -69,7 +69,7 @@ function runWithSession(F) {
 
 // CHECK DATABASE AND INIZIALIZE OBJECT
 
-sequelize.authenticate().then(() => {
+let startJobDB = sequelize.authenticate().then(() => {
   return sequelize.sync({ logging: false });
 }).catch(err => {
   console.log("Database error:", err);
@@ -106,7 +106,7 @@ app.set('views', path.join(__dirname, 'ejs'))
 
 var BOT_USERNAME_REGEXP = "";
 
-bot.getMe().then((r) => {
+let startJobBot = bot.getMe().then((r) => {
   console.log("My username is ", r.username);
   BOT_USERNAME_REGEXP = RegExp("@" + r.username, "g");
   bot.on("message", (msg) => {
@@ -511,26 +511,28 @@ if (IS_PRODUCTION && APP_URL) {
   });
 }
 
-cron.schedule('0 0 1 * * *', async () => {
-  console.log("chat reset");
-  Session.counterReset();
-}, {
-  timezone: "Europe/Rome"
+startJobDB.then(() => {
+  cron.schedule('0 0 1 * * *', async () => {
+    console.log("chat reset");
+    Session.counterReset();
+  });
 });
 
-job = wait(1000).then(watcherCheck).then(watcherSend);
-
-setTimeout(async () => {
+startJobBot.then(async () => {
+  await startJobDB;
+}).then(
+  watcherCheck
+).then(
+  watcherSend
+).then(async () => {
   // If no collection has been performed in the last SCRAP_FORCE_TIME seconds
   //  then one is ran now
-  collections = await Scraper.get_last_collection(true, true, false);
-  await job;
-  delta_last = (new Date() - collections.last.date) / 1000;
-  delta_success = (new Date() - collections.successful.date) / 1000;
+  let collections = await Scraper.get_last_collection(true, true, false);
   if (
-    (delta_last > SCRAP_FORCE_TIME) ||
-    (delta_success > 2 * SCRAP_FORCE_TIME)
+    (!collections.successful) ||
+    ((new Date() - collections.last.date) > SCRAP_FORCE_TIME * 1000) ||
+    ((new Date() - collections.successful.date) > 2000 * SCRAP_FORCE_TIME)
   ) {
     Scraper.collect('', '').then(watcherSend).catch(catchAndLogError);
   }
-}, 1000);
+})

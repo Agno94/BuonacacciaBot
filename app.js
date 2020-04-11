@@ -110,7 +110,9 @@ let startJobBot = bot.getMe().then((r) => {
   console.log("My username is ", r.username);
   BOT_USERNAME_REGEXP = RegExp("@" + r.username, "g");
   bot.on("message", (msg) => {
-    msg.text = msg.text.replace(BOT_USERNAME_REGEXP, "");
+    if (msg.text) {
+      msg.text = msg.text.replace(BOT_USERNAME_REGEXP, "");
+    }
     msg.chat.name = msg.chat.title || msg.chat.firstname;
   });
   console.log("Start listening");

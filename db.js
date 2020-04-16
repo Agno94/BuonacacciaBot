@@ -1,6 +1,7 @@
 const Sequelize = require('sequelize');
 
 const { REGIONI, ZONES, CATEGORIES, BRANCHE } = require("./data.js");
+const { MESSAGES } = require("./message.js");
 
 module.exports = function (sequelize, DateTypes) {
 
@@ -8,12 +9,19 @@ module.exports = function (sequelize, DateTypes) {
 
     sequelize.CATEGORIES_CHOICES = CATEGORIES.CHOICES;
 
+    sequelize.WATCH_REPLY = MESSAGES.WATCH;
+    sequelize.SEARCH_REPLY = MESSAGES.SEARCH;
+    sequelize.EVENT_REPLY = MESSAGES.EVENT;
+    sequelize.CANCEL_REPLY = MESSAGES.CANCEL;
+
+    sequelize.BC_STATUS_CHOICES = [
+        'OK', 'INCOMPLETE', 'BC_ERROR', 'NET_ERROR', 'PARSE_ERROR', 'DB_ERROR', 'OTHER_ERROR'
+    ]
+
     const BCLog = sequelize.define('bc_log', {
         status: {
             type: Sequelize.ENUM,
-            values: [
-                'OK', 'INCOMPLETE', 'BC_ERROR', 'NET_ERROR', 'PARSE_ERROR', 'DB_ERROR', 'OTHER_ERROR'
-            ]
+            values: sequelize.BC_STATUS_CHOICES,
         },
         date: {
             type: Sequelize.DATE,
@@ -86,27 +94,42 @@ module.exports = function (sequelize, DateTypes) {
         },
     }, {});
 
-    const EventReply = sequelize.define('event_reply', {
-        chatId: {
+    const Reply = sequelize.define('reply', {
+        type: {
+            type: Sequelize.ENUM,
+            values: [
+                sequelize.WATCH_REPLY, sequelize.SEARCH_REPLY,
+                sequelize.EVENT_REPLY, sequelize.CANCEL_REPLY,
+            ],
+        },
+        chatID: {
             type: Sequelize.BIGINT,
             allowNull: false,
             field: "chat_id"
         },
-        msgId: {
+        msgID: {
             type: Sequelize.BIGINT,
             allowNull: false,
             field: "message_id",
         },
-        status: {
-            type: Sequelize.ENUM,
-            values: [
-                "Silent", "Expired", "Alert"
-            ],
-            defaultValue: "Silent",
+        data: {
+            type: Sequelize.JSONB,
         },
     }, {});
 
-    EventReply.belongsTo(BCEvent, { onDelete: 'cascade' });
+    const Alarm = sequelize.define('reply', {
+        warning: {
+            type: Sequelize.BOOLEAN,
+            defaultValue: false,
+        },
+        status: {
+            type: Sequelize.SMALLINT,
+            defaultValue: 0,
+        },
+    }, {});
+
+    Alarm.belongsTo(BCEvent, { onDelete: 'cascade' });
+    Alarm.belongsTo(Reply, { onDelete: 'cascade' });
 
     const ChatSession = sequelize.define('chat_session', {
         chatId: {
@@ -133,6 +156,6 @@ module.exports = function (sequelize, DateTypes) {
         }
     }, {});
 
-    return { BCEvent, BCLog, Watcher, EventReply, ChatSession }
+    return { BCEvent, BCLog, Watcher, Reply, ChatSession }
 
 }

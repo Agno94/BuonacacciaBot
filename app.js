@@ -19,8 +19,8 @@ const SCRAP_FORCE_TIME =
   process.env.SCRAP_FORCE_TIME || (IS_PRODUCTION && 12 * 3600) || 10;
 
 const { REGIONI, ZONES, CATEGORIES, BRANCHE, COLLECTIONS } = require("./data.js");
-
 const TEMPLATES = require("./templates.js")
+const { MESSAGES, SELECTION } = require("./message.js");
 
 // UTILS
 
@@ -44,7 +44,7 @@ const Sequelize = require('sequelize');
 const Op = Sequelize.Op;
 
 const sequelize = new Sequelize(DATABASE_URL, { define: { timestamps: false } });
-const { BCEvent, BCLog, Watcher, EventReply, ChatSession } = sequelize.import("./db.js");
+const { BCEvent, BCLog, Watcher, Reply, Alarm, ChatSession } = sequelize.import("./db.js");
 
 // WEB-SCAPER / BC's EVENTS COLLECTION
 const EventScraper = require('./scraper.js');
@@ -89,6 +89,9 @@ if (IS_PRODUCTION) {
 } else {
   bot = new TelegramBot(TG_TOKEN, { polling: true });
 };
+
+const Replier = require("./reply.js")
+const reply = new Replier(bot, Reply);
 
 const app = express();
 var server = null;
@@ -138,10 +141,7 @@ async function watcherCheck() {
   return events_list
 }
 
-var is_processing_watcher = false;
-
 async function watcherSend(events_list) {
-  is_processing_watcher = true;
   let cache = {};
   for (const event of events_list) {
     let r = event.regione;
@@ -166,25 +166,20 @@ async function watcherSend(events_list) {
         return [];
       })
     }
-    pool = watchers.map(
-      (w, i) => wait(i * 100).then(
-        bot.sendMessage(w.chatId, TEMPLATES.event2HTML(event), {
-          parse_mode: 'HTML',
-          reply_to_message_id: w.msgId,
-        })).then(
-          () => console.log("message sent")
-        )
-    );
-    await wait(1000);
-    for (const msg in pool) await msg;
+    let refs = watchers.map(
+      (w) => reply.message(MESSAGES.EVENT, { id: w.chatId }, {
+        event: event.dataValues,
+        reply_to: w.msgId,
+      })
+    )
+    await wait(100);
+    for (const ref of refs) await reply.response(ref);
     BCEvent.update({
       hasBeenWatched: true,
     }, {
       where: { bcId: event.bcId }
     }).catch(catchAndLogError);
   }
-  //await wait(200);
-  is_processing_watcher = false;
   console.log("Sent messages for all watchers");
 }
 
@@ -192,7 +187,7 @@ bot.onText(/\/start/, runWithSession(
   (msg, match) => {
     const chatId = msg.chat.id;
     console.log("\/start received by", chatId);
-    bot.sendMessage(chatId, TEMPLATES.Welcome(), TEMPLATES.objWelcome);
+    reply.message(MESSAGES.WELCOME, msg.chat, {});
   }));
 
 function search(msg, chatId, categoryID, regioneID) {
@@ -204,8 +199,13 @@ function search(msg, chatId, categoryID, regioneID) {
       category: categoryID,
     }
   }).then(async (r) => {
-    bot.sendChatAction(chatId, "typing");
-    bot.sendMessage(chatId, TEMPLATES.BetaAlert, TEMPLATES.objBetaAlert);
+    let reply_data = {
+      step: SELECTION.COMPLETE,
+      cat: categoryID,
+      reg: regioneID,
+      emoji: BRANCHE[CATEGORIES[categoryID].branca].emoji,
+      count: r.count,
+    }
     if (r.count > MAX_FIND_RESULTS) {
       let status = msg.session.status;
       status.hasEventList = true;
@@ -213,20 +213,21 @@ function search(msg, chatId, categoryID, regioneID) {
       msg.session.save({ fields: ['status'] }).catch(
         (e) => console.log("error updating session", e)
       )
-      await bot.sendMessage(chatId, TEMPLATES.SearchManyResults(r.count), TEMPLATES.objSearchManyResults);
-      //console.log(msg.session, Session.get(chatId));
-      bot.sendMessage(chatId, TEMPLATES.SearchEnd(categoryID, regioneID), TEMPLATES.objSearchEnd);
-    } else if (r.count) {
-      let msgs = r.rows.map((item) => {
-        reply = TEMPLATES.event2HTML(item);
-        return bot.sendMessage(chatId, reply, TEMPLATES.objEventReply);
-      })
-      for (const msg of msgs) {
-        await msg;
-      }
-      bot.sendMessage(chatId, TEMPLATES.SearchEnd(categoryID, regioneID), TEMPLATES.objSearchEnd);
+      reply_data.many = true;
+      reply.message(MESSAGES.SEARCH, { id: chatId }, reply_data);
     } else {
-      bot.sendMessage(chatId, TEMPLATES.NoSearchResult(categoryID, regioneID), TEMPLATES.objNoSearchResult);
+      if (r.count) {
+        let msgRefs = r.rows.map(
+          (item) => reply.message(MESSAGES.EVENT, { chat: chatId }, {
+            event: item.dataValues,
+          })
+        );
+        for (const ref of msgRefs) {
+          let response = await reply.response(ref);
+          if (response.error) console.log("Error sending Search Results", response);
+        }
+      }
+      reply.message(MESSAGES.SEARCH, { id: chatId }, reply_data);
     }
   }).catch(e => {
     console.log("Search failed");
@@ -247,9 +248,15 @@ function watch(msg, chat_id, cat, reg) {
     let watcher = r[0];
     let wid = watcher.id;
     watcher.expiredate = new Date(today().getTime() + 2 * 365 * 24 * 3600 * 1000);
-    r = await bot.sendMessage(chat_id,
-      TEMPLATES.WatcherCreation(cat, reg, wid), TEMPLATES.objWatcherCreation);
-    watcher.msgId = r.message_id;
+    let ref = reply.message(MESSAGES.WATCH, msg.chat, {
+      step: SELECTION.COMPLETE,
+      cat: cat,
+      reg: reg,
+      emoji: BRANCHE[CATEGORIES[cat].branca].emoji,
+      id: wid,
+    });
+    let resp = await reply.response(ref);
+    watcher.msgId = resp.message_id;
     await watcher.save();
   }, (e) => {
     sendError(msg);
@@ -271,12 +278,23 @@ function paramsAndRun(F, msg, cat, reg) {
       let status = msg.session.status;
       status.askedForRegione = true;
       status.regioneUsedFor = F;
+      type = { 'search': MESSAGES.SEARCH, 'watch': MESSAGES.WATCH }[F];
       status.regioneUsedWith = [cat];
-      bot.sendMessage(msg.chat.id, TEMPLATES.AskRegione, TEMPLATES.objAskRegione);
-      return [cat, r]
-    } else {
-      return [cat, r];
+      BCEvent.count({
+        where: { category: cat },
+        attributes: ["regione"],
+        group: ['regione']
+      }).then((list) => {
+        let reply_data = {
+          step: SELECTION.REGIONE,
+          emoji: BRANCHE[CATEGORIES[cat].branca].emoji,
+          cat: cat,
+          list: list,
+        };
+        let ref = reply.message(type, msg.chat, reply_data)
+      })
     }
+    return [cat, r];
   } else {
     return [false, false];
   }
@@ -284,21 +302,35 @@ function paramsAndRun(F, msg, cat, reg) {
 
 function selectRegione(msg, regione_cmd) {
   console.log(regione_cmd);
-  //bot.sendMessage(msg.chat.id, "Non implementato");
   let status = msg.session.status;
   if (!status.askedForRegione) {
     bot.sendMessage(msg.chat.id, "help TO DO");
     return;
   }
   let regione = REGIONI.COMMAND2CODE[regione_cmd];
-  console.log(regione);
-  if (!regione) {
-    //Wrong Regione
-    bot.sendMessage(msg.chat.id, TEMPLATES.AskRegione, TEMPLATES.objAskRegione);
-    return;
-  }
   let command = status.regioneUsedFor;
   let args = status.regioneUsedWith;
+  console.log(regione);
+  if (!regione) {
+    let cat = args[0];
+    BCEvent.count({
+      where: { category: cat },
+      attributes: ["regione"],
+      group: ['regione']
+    }).then((list) => {
+      let reply_data = {
+        step: SELECTION.REGIONE,
+        emoji: BRANCHE[CATEGORIES[cat].branca].emoji,
+        cat: cat,
+        list: list,
+      };
+      type = { 'search': MESSAGES.SEARCH, 'watch': MESSAGES.WATCH }[command];
+      let ref = reply.message(type, msg.chat, reply_data)
+    })
+    return;
+  }
+  // let command = status.regioneUsedFor;
+  // let args = status.regioneUsedWith;
   delete status.askedForRegione;
   delete status.regioneUsedFor;
   delete status.regioneUsedWith;
@@ -317,14 +349,14 @@ function selectRegione(msg, regione_cmd) {
 bot.onText(/\/cerca[ _]*$/, runWithSession((msg, match) => {
   console.log("onText \/cerca")
   const chatId = msg.chat.id;
-  bot.sendMessage(chatId, TEMPLATES.SearchHelp(msg.chat.name), TEMPLATES.objSearchHelp);
+  reply.message(MESSAGES.SEARCH, msg.chat, { step: SELECTION.CATEGORY, });
 }));
 
 bot.onText(/\/cerca[ _]+([a-z0-9]+)[ _]*(.*)/, runWithSession((msg, match) => {
   console.log("onText \/cerca_CAT", match);
   let [category, regione] = paramsAndRun("search", msg, match[1].toLowerCase(), match[2]);
   if (!category) {
-    bot.sendMessage(chatId, TEMPLATES.SearchHelp(msg.chat.name), TEMPLATES.objSearchHelp);
+    reply.message(MESSAGES.SEARCH, msg.chat, { step: SELECTION.CATEGORY, });
     return;
   }
   if (!regione) return;
@@ -334,14 +366,14 @@ bot.onText(/\/cerca[ _]+([a-z0-9]+)[ _]*(.*)/, runWithSession((msg, match) => {
 
 bot.onText(/\/osserva[ _]*$/, runWithSession((msg, match) => {
   console.log("on Text \/osserva");
-  bot.sendMessage(msg.chat.id, TEMPLATES.WatchHelp(msg.chat.name), TEMPLATES.objWatchHelp);
+  reply.message(MESSAGES.WATCH, msg.chat, { step: SELECTION.CATEGORY, });
 }));
 
 bot.onText(/\/osserva[ _]+([a-z0-9]+)[ _]*(.*)/, runWithSession((msg, match) => {
   console.log("onText \/osserva_..._...", match);
   let [category, regione] = paramsAndRun("watch", msg, match[1], match[2]);
   if (!category) {
-    bot.sendMessage(chatId, TEMPLATES.WatchHelp(msg.chat.name), TEMPLATES.objWatchHelp);
+    reply.message(MESSAGES.WATCH, msg.chat, { step: SELECTION.CATEGORY, });
     return;
   }
   if (!regione) return;
@@ -363,19 +395,18 @@ bot.onText(/\/tutti[ _]*$/, runWithSession(async (msg, match) => {
     bot.sendMessage(msg.chat.id, "help TO DO");
     return;
   }
-  let p = bot.sendMessage(msg.chat.id, TEMPLATES.BetaAlert, TEMPLATES.objBetaAlert);
   let cat = status.regioneUsedWith[0];
   let list = await BCEvent.count({ where: { category: cat }, attributes: ["regione"], group: ['regione'] });
-  await p;
-  if (list.length) {
-    let message_text = TEMPLATES.MultiSelectionWarning(
-      status.regioneUsedFor, cat, list);
-    await bot.sendMessage(msg.chat.id, TEMPLATES.AskRegione, TEMPLATES.objAskRegione);
-    bot.sendMessage(msg.chat.id, message_text, TEMPLATES.objMultiSelectionWarning);
-  } else {
-    bot.sendMessage(msg.chat.id, "⚠️ La selezione di più regioni non è stata implementata 🚧");
-    bot.sendMessage(msg.chat.id, "Nessun evento di questo tipo trovato");
-  }
+  let reply_data = {
+    step: SELECTION.REGIONE,
+    emoji: BRANCHE[CATEGORIES[cat].branca].emoji,
+    cat: cat,
+    list: list,
+  };
+  type = { 'search': MESSAGES.SEARCH, 'watch': MESSAGES.WATCH }[status.regioneUsedFor];
+  let ref = reply.message(type, msg.chat, reply_data)
+  await reply.response(ref);
+  bot.sendMessage(msg.chat.id, "⚠️ La selezione di più regioni non è stata implementata 🚧");
 }));
 
 // Show search results
@@ -400,21 +431,14 @@ bot.onText(/\/mostra[ _]*([0-9]*)/, runWithSession(async (msg, match) => {
     await bot.sendMessage(chatId,
       `Sto per inviare i dettagli di <b>${no_events}</b> eventi`, { parse_mode: 'HTML' })
     try {
-      while (no_events) {
-        await wait(500);
-        let batch_len = Math.min(MAX_FIND_RESULTS, no_events);
-        let send_list = status.eventList.slice(0, batch_len);
-        let msgs = send_list.map((item) => {
-          reply = TEMPLATES.event2HTML(item);
-          return bot.sendMessage(chatId, reply, { parse_mode: 'HTML' });
-        });
-        status.eventList = status.eventList.slice(batch_len);
-        no_events -= batch_len;
-        delay = wait(1000);
-        for (const msg of msgs) await msg;
-        if (no_events) bot.sendChatAction(chatId, "typing");
-        await delay;
-      }
+      let send_list = status.eventList.slice(0, no_events);
+      let msg_refs = send_list.map(
+        (item) => {
+          reply.message(MESSAGES.EVENT, msg.chat, { event: item })
+        }
+      );
+      status.eventList = status.eventList.slice(no_events);
+      for (const ref of msg_refs) await reply.response(ref);
     } catch (e) {
       sendError(msg);
       console.log("Error showing results:", e);
@@ -422,8 +446,7 @@ bot.onText(/\/mostra[ _]*([0-9]*)/, runWithSession(async (msg, match) => {
     status.hasEventList = Boolean(status.eventList.length);
     delete status.temp.isSendingEventList;
     if (status.hasEventList)
-      bot.sendMessage(chatId,
-        TEMPLATES.OtherResults(status.eventList.length), { parse_mode: 'HTML' });
+      reply.message(MESSAGES.SHOW, msg.chat, { count: status.eventList.length });
     else delete status.hasEventList;
   } else {
     bot.sendMessage(chatId, "Nessun messaggio da mostrare"); // TO DO: reply-to
@@ -467,7 +490,7 @@ function signalHandler(SIGNAL) {
     (e) => { console.error("Error", e); }
   ).then(
     async () => {
-      while (is_processing_watcher) {
+      while (reply.isActive()) {
         console.log("Waiting for messages to be sent");
         await wait(1000);
       };

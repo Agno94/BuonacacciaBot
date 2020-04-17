@@ -48,9 +48,14 @@ class Replier {
             chat: chat,
         };
         let params = {};
+        if (data.reply_to) {
+            msg.option.reply_to_message_id = data.reply_to;
+            delete data.reply_to;
+        }
         let keyboard = false;
         switch (type) {
             case (MESSAGES.EVENT):
+                // console.log(data);
                 params.event = data.event;
                 keyboard = [[
                     {
@@ -170,7 +175,6 @@ class Replier {
         let result;
         while (tries && !success) {
             try {
-                // console.log("Sending message", message);
                 result = await this.bot.sendMessage(
                     message.chat.id,
                     message.text,
@@ -201,6 +205,7 @@ class Replier {
         return (function (r) {
             this.responses[ref] = r;
             delete this.sendActionTime[chatID];
+            if (r.chat && (r.chat.type == "private")) this.privateSet.add(r.chat.id);
             setTimeout(() => {
                 this.globalCounter -= 1;
             }, 1000);

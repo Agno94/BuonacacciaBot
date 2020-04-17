@@ -139,7 +139,6 @@ class Replier {
                 if (!this.chatQueued[chatID]) delete this.chatQueued[chatID]
                 else {
                     let delta = time - (this.sendActionTime[chatID] || 0);
-                    console.log("delta typing action", delta);
                     if (delta > 4000) {
                         bot.sendChatAction(chatID, "typing");
                         this.sendActionTime[chatID] = time;

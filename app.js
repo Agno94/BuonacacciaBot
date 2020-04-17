@@ -19,7 +19,7 @@ const SCRAP_FORCE_TIME =
   process.env.SCRAP_FORCE_TIME || (IS_PRODUCTION && 12 * 3600) || 10;
 
 const { REGIONI, ZONES, CATEGORIES, BRANCHE, COLLECTIONS } = require("./data.js");
-const TEMPLATES = require("./templates.js")
+const { TEMPLATES } = require("./templates.js")
 const { MESSAGES, SELECTION } = require("./message.js");
 
 // UTILS
@@ -218,7 +218,7 @@ function search(msg, chatId, categoryID, regioneID) {
     } else {
       if (r.count) {
         let msgRefs = r.rows.map(
-          (item) => reply.message(MESSAGES.EVENT, { chat: chatId }, {
+          (item) => reply.message(MESSAGES.EVENT, { id: chatId }, {
             event: item.dataValues,
           })
         );
@@ -273,7 +273,6 @@ function paramsAndRun(F, msg, cat, reg) {
   if (CATEGORIES.SET.has(cat)) {
     let h = reg.trim().replace(/[_ 'x]/g, "").toLowerCase();
     let r = REGIONI.COMMAND2CODE[h];
-    console.log("regione = ", r)
     if (!r) {
       let status = msg.session.status;
       status.askedForRegione = true;
@@ -310,7 +309,6 @@ function selectRegione(msg, regione_cmd) {
   let regione = REGIONI.COMMAND2CODE[regione_cmd];
   let command = status.regioneUsedFor;
   let args = status.regioneUsedWith;
-  console.log(regione);
   if (!regione) {
     let cat = args[0];
     BCEvent.count({
@@ -411,7 +409,7 @@ bot.onText(/\/tutti[ _]*$/, runWithSession(async (msg, match) => {
 
 // Show search results
 bot.onText(/\/mostra[ _]*([0-9]*)/, runWithSession(async (msg, match) => {
-  console.log("onText \/mostra", match);
+  console.log("onText \/mostra", match[1]);
   let no_events;
   try {
     no_events = Number(match[1] || "10000")
@@ -432,17 +430,15 @@ bot.onText(/\/mostra[ _]*([0-9]*)/, runWithSession(async (msg, match) => {
       `Sto per inviare i dettagli di <b>${no_events}</b> eventi`, { parse_mode: 'HTML' })
     try {
       let send_list = status.eventList.slice(0, no_events);
-      let msg_refs = send_list.map(
-        (item) => {
-          reply.message(MESSAGES.EVENT, msg.chat, { event: item })
-        }
-      );
       status.eventList = status.eventList.slice(no_events);
+      let msg_refs = send_list.map(
+        (item) => reply.message(MESSAGES.EVENT, msg.chat, { event: item })
+      );
       for (const ref of msg_refs) await reply.response(ref);
     } catch (e) {
       sendError(msg);
       console.log("Error showing results:", e);
-    } finally { }
+    }
     status.hasEventList = Boolean(status.eventList.length);
     delete status.temp.isSendingEventList;
     if (status.hasEventList)

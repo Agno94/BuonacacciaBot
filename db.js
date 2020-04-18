@@ -117,7 +117,7 @@ module.exports = function (sequelize, DateTypes) {
         },
     }, {});
 
-    const Alarm = sequelize.define('reply', {
+    const Alarm = sequelize.define('alarm', {
         warning: {
             type: Sequelize.BOOLEAN,
             defaultValue: false,
@@ -149,6 +149,11 @@ module.exports = function (sequelize, DateTypes) {
             type: Sequelize.SMALLINT,
             defaultValue: 1,
             field: "counter"
+        },
+        callbackCounter: {
+            type: Sequelize.SMALLINT,
+            defaultValue: 1,
+            field: "callback_counter",
         },
         date: {
             type: Sequelize.DATE,

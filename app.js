@@ -54,19 +54,6 @@ Scraper = new EventScraper(BCEvent, BCLog, Sequelize);
 const SessionManager = require('./session.js');
 Session = new SessionManager(ChatSession);
 
-function runWithSession(F) {
-  // Run every fuction adding a session property to the incoming message
-  return async function (msg, ...Args) {
-    let session = await Session.get(msg.chat.id);
-    if (session) {
-      msg.session = session;
-      msg.processed = true;
-      await F(msg, ...Args);
-      msg.session.update({ status: msg.session.status });
-    };
-  };
-};
-
 // CHECK DATABASE AND INIZIALIZE OBJECT
 
 let startJobDB = sequelize.authenticate().then(() => {
@@ -174,7 +161,9 @@ async function watchEvent() {
   }
 }
 
-bot.onText(/\/start/, runWithSession(
+// Bot
+
+bot.onText(/\/start/, Session.runWith(
   (msg, match) => {
     const chatId = msg.chat.id;
     console.log("\/start received by", chatId);
@@ -335,13 +324,13 @@ function selectRegione(msg, regione_cmd) {
 };
 
 
-bot.onText(/\/cerca[ _]*$/, runWithSession((msg, match) => {
+bot.onText(/\/cerca[ _]*$/, Session.runWith((msg, match) => {
   console.log("onText \/cerca")
   const chatId = msg.chat.id;
   reply.message(MESSAGES.SEARCH, msg.chat, { step: SELECTION.CATEGORY, });
 }));
 
-bot.onText(/\/cerca[ _]+([a-z0-9]+)[ _]*(.*)/, runWithSession((msg, match) => {
+bot.onText(/\/cerca[ _]+([a-z0-9]+)[ _]*(.*)/, Session.runWith((msg, match) => {
   console.log("onText \/cerca_CAT", match);
   let [category, regione] = paramsAndRun("search", msg, match[1].toLowerCase(), match[2]);
   if (!category) {
@@ -353,12 +342,12 @@ bot.onText(/\/cerca[ _]+([a-z0-9]+)[ _]*(.*)/, runWithSession((msg, match) => {
   search(msg, chatId, category, regione);
 }));
 
-bot.onText(/\/osserva[ _]*$/, runWithSession((msg, match) => {
+bot.onText(/\/osserva[ _]*$/, Session.runWith((msg, match) => {
   console.log("on Text \/osserva");
   reply.message(MESSAGES.WATCH, msg.chat, { step: SELECTION.CATEGORY, });
 }));
 
-bot.onText(/\/osserva[ _]+([a-z0-9]+)[ _]*(.*)/, runWithSession((msg, match) => {
+bot.onText(/\/osserva[ _]+([a-z0-9]+)[ _]*(.*)/, Session.runWith((msg, match) => {
   console.log("onText \/osserva_..._...", match);
   let [category, regione] = paramsAndRun("watch", msg, match[1], match[2]);
   if (!category) {
@@ -370,15 +359,15 @@ bot.onText(/\/osserva[ _]+([a-z0-9]+)[ _]*(.*)/, runWithSession((msg, match) => 
   watch(msg, chatId, category, regione);
 }));
 
-bot.onText(/\/nazionale[ _]*/, runWithSession((msg, match) => {
+bot.onText(/\/nazionale[ _]*/, Session.runWith((msg, match) => {
   selectRegione(msg, "nazionale");
 }));
 
-bot.onText(/\/regione[ _]*([A-Za-z _]*)/, runWithSession((msg, match) => {
+bot.onText(/\/regione[ _]*([A-Za-z _]*)/, Session.runWith((msg, match) => {
   selectRegione(msg, match[1].replace(/[_ ]/g, "").toLowerCase());
 }));
 
-bot.onText(/\/tutti[ _]*$/, runWithSession(async (msg, match) => {
+bot.onText(/\/tutti[ _]*$/, Session.runWith(async (msg, match) => {
   let status = msg.session.status;
   if (!status.askedForRegione) {
     bot.sendMessage(msg.chat.id, "help TO DO");
@@ -399,7 +388,7 @@ bot.onText(/\/tutti[ _]*$/, runWithSession(async (msg, match) => {
 }));
 
 // Show search results
-bot.onText(/\/mostra[ _]*([0-9]*)/, runWithSession(async (msg, match) => {
+bot.onText(/\/mostra[ _]*([0-9]*)/, Session.runWith(async (msg, match) => {
   console.log("onText \/mostra", match[1]);
   let no_events;
   try {
@@ -440,7 +429,7 @@ bot.onText(/\/mostra[ _]*([0-9]*)/, runWithSession(async (msg, match) => {
   }
 }));
 
-bot.onText(/\/annulla[ _]*([0-9])+/, runWithSession((msg, match) => {
+bot.onText(/\/annulla[ _]*([0-9])+/, Session.runWith((msg, match) => {
   try {
     let wid = Number(match[1]);
     Watcher.destroy({
@@ -455,9 +444,41 @@ bot.onText(/\/annulla[ _]*([0-9])+/, runWithSession((msg, match) => {
   }
 }));
 
-bot.onText(/\/promemoria[ _]*$/, runWithSession((msg, match) => {
+bot.onText(/\/promemoria[ _]*$/, Session.runWith((msg, match) => {
   bot.sendMessage(msg.chat.id, TEMPLATES.BetaAlert + "\nNon ancora implementato", { parse_mode: 'HTML' });
 }))
+
+bot.on('callback_query', async (query) => {
+  const { message: { chat, message_id } = {}, data } = query;
+  function exitWithAlert(e) {
+    console.error(`Callback error: message ${message_id} chat ${chat.id}: ${e}`);
+    console.log(query.data);
+    bot.answerCallbackQuery(query.id, {
+      text: "Invalid query",
+      show_alert: false,
+    });
+  };
+  Session.callback(chat.id);
+  let callback_params = data.split("/").map(l => l.trim()).filter(l => l);
+  let type = callback_params[0];
+  if (!MESSAGES.callBackSet.has(type)) return exitWithAlert("Invalid query");
+  let messages = await Reply.findAndCountAll({
+    where: {
+      chatID: chat.id,
+      msgID: message_id,
+    },
+  });
+  if (messages.count != 1) return exitWithAlert(`${messages.count} replies`);
+  let message = messages.rows[0];
+  if (type != message.type) return exitWithAlert(`Mismatching types`);
+  switch (type) {
+    case (MESSAGES.CANCEL):
+      break;
+    default:
+      bot.answerCallbackQuery(query.id, { text: "Non implementato", });
+  }
+  console.log(message, message.dataValues);
+});
 
 // ON SIGINT OR SIGTERM
 

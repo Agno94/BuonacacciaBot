@@ -25,6 +25,7 @@ const MESSAGES = {
 
     SHOW_BETA_ALERT: (process.env.SHOW_BETA_ALERT == 1) || true,
 
+    callBackSet: new Set([SEARCH, WATCH, EVENT, CANCEL]),
     withBetaAlertSet: new Set([WELCOME, WARNING, SEARCH, WATCH, CANCEL]),
     prioritySet: new Set([WELCOME, SEARCH, WATCH, CANCEL, WARNING]),
     HTMLSet: new Set([WELCOME, STATUS, ABOUT, SEARCH, WATCH, EVENT, SHOW]),

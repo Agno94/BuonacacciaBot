@@ -28,8 +28,7 @@ class SessionManager {
         this._banned_set.has(chatId);
     }
 
-    async get(id) {
-        if (this.isChatBanned(id)) return false;
+    async _findOrCreate(id) {
         let session = null;
         if (!this._list[id]) {
             session = (await this.ChatSession.findOrCreate({
@@ -42,6 +41,12 @@ class SessionManager {
         } else {
             session = this._list[id];
         }
+        return session;
+    }
+
+    async get(id) {
+        if (this.isChatBanned(id)) return false;
+        let session = await this._findOrCreate(id);
         session.dailyCounter++;
         if (session.dailyCounter > DAY_MAX_MSGS) {
             let now = new Date()
@@ -52,7 +57,6 @@ class SessionManager {
                 session.isBanned = true;
                 this._banned_set.add(id);
                 this._whenBanned(id);
-                //bot.sendMessage(Id, "Hai mandato troppo messaggi oggi, aspetta 24ore", { parse_mode: 'HTML' });
                 session.save();
                 return false;
             }
@@ -69,9 +73,11 @@ class SessionManager {
                 { where: { dailyCounter: 0 } }
             )
             this.initialize();
-            this.ChatSession.update(
-                { dailyCounter: 0, date: new Date() }, { where: {} }
-            );
+            this.ChatSession.update({
+                dailyCounter: 0,
+                callbackCounter: 0,
+                date: new Date(),
+            }, { where: {} });
         } catch (err) {
             console.log("Error resetting counters and banned list", err);
         }
@@ -88,6 +94,26 @@ class SessionManager {
         for (const q of queries) await q;
         return;
     }
+
+    callback(id) {
+        this._findOrCreate(id).then((session) => {
+            session.callbackCounter += 1;
+            session.save();
+        })
+    }
+
+    runWith(F) {
+        // Run every fuction adding a session property to the incoming message
+        return (async function (msg, ...Args) {
+            let session = await this.get(msg.chat.id);
+            if (session) {
+                msg.session = session;
+                msg.processed = true;
+                await F(msg, ...Args);
+                msg.session.update({ status: msg.session.status });
+            };
+        }).bind(this);
+    };
 }
 
 module.exports = SessionManager;

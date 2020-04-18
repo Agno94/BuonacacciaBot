@@ -126,61 +126,52 @@ let startJobBot = bot.getMe().then((r) => {
   process.exit(1);
 })
 
-// MIGHT BE TO DO: add relation (one2many?) between events and collection log
-
 // Watcher Send Message
 
-async function watcherCheck() {
-  let events_list = await BCEvent.findAll({
-    where: { hasBeenWatched: false },
-  }).catch((e) => {
-    console.error("Selection of unwatched events failed", e.message);
-    return [];
+async function watchEvent() {
+  console.log("Looking for unwatched events");
+  let list = await BCEvent.count({
+    where: {
+      hasBeenWatched: false,
+      // [Op.and]: [Sequelize.literal(
+      //   'EXISTS (SELECT * FROM watchers WHERE watchers.category::text = bc_event.category::text)'
+      // )]
+    },
+    attributes: ["category", "regione"],
+    group: ['category', 'regione']
   });
-  console.log(`Found ${events_list.length} events`);
-  return events_list
-}
-
-async function watcherSend(events_list) {
-  let cache = {};
-  for (const event of events_list) {
-    let r = event.regione;
-    let c = event.category;
-    let watchers;
-    if (cache[c] && cache[c][r]) {
-      watchers = cache[c][r];
-    } else {
-      watchers = await Watcher.findAll({
-        where: {
-          regione: r,
-          category: c,
-        },
-        attributes: ['chatId', 'msgId'],
-      }).then((x) => {
-        if (!cache[c]) cache[c] = {};
-        cache[c][r] = x;
-        return x;
-      }).catch((e) => {
-        console.error("Error", e);
-        console.error("event was", event);
-        return [];
-      })
+  for (const params of list) {
+    let eventsQuery = BCEvent.findAll({
+      where: {
+        hasBeenWatched: false,
+        category: params.category,
+        regione: params.regione,
+      }
+    });
+    let watchersQuery = Watcher.findAll({
+      where: {
+        category: params.category,
+        regione: params.regione,
+      },
+    });
+    events = await eventsQuery;
+    watchers = await watchersQuery;
+    for (const event of events) {
+      let refs = watchers.map(
+        (w) => reply.message(MESSAGES.EVENT, { id: w.chatId }, {
+          event: event.dataValues,
+          reply_to: w.msgId,
+        })
+      )
+      await wait(100);
+      for (const ref of refs) await reply.response(ref);
+      BCEvent.update({
+        hasBeenWatched: true,
+      }, {
+        where: { bcId: event.bcId }
+      }).catch(catchAndLogError);
     }
-    let refs = watchers.map(
-      (w) => reply.message(MESSAGES.EVENT, { id: w.chatId }, {
-        event: event.dataValues,
-        reply_to: w.msgId,
-      })
-    )
-    await wait(100);
-    for (const ref of refs) await reply.response(ref);
-    BCEvent.update({
-      hasBeenWatched: true,
-    }, {
-      where: { bcId: event.bcId }
-    }).catch(catchAndLogError);
   }
-  console.log("Sent messages for all watchers");
 }
 
 bot.onText(/\/start/, runWithSession(
@@ -464,7 +455,6 @@ bot.onText(/\/annulla[ _]*([0-9])+/, runWithSession((msg, match) => {
   }
 }));
 
-
 bot.onText(/\/promemoria[ _]*$/, runWithSession((msg, match) => {
   bot.sendMessage(msg.chat.id, TEMPLATES.BetaAlert + "\nNon ancora implementato", { parse_mode: 'HTML' });
 }))
@@ -542,9 +532,7 @@ startJobDB.then(() => {
 startJobBot.then(async () => {
   await startJobDB;
 }).then(
-  watcherCheck
-).then(
-  watcherSend
+  watchEvent
 ).then(async () => {
   // If no collection has been performed in the last SCRAP_FORCE_TIME seconds
   //  then one is ran now
@@ -554,7 +542,13 @@ startJobBot.then(async () => {
     ((new Date() - collections.last.date) > SCRAP_FORCE_TIME * 1000) ||
     ((new Date() - collections.successful.date) > 2000 * SCRAP_FORCE_TIME)
   ) {
-    Scraper.collect('', '').then(watcherSend).catch(catchAndLogError);
+    r = await Scraper.collect('', '').catch(catchAndLogError);
+    if (r.length) {
+      axios.get(APP_URL).catch(
+        error => { console.log("Keep up: Error:", error); }
+      );
+      watchEvent().catch(catchAndLogError);
+    }
   } else {
     console.log(`A collection has been run ${(new Date() - collections.last.date) / 1000}s ago`);
   }

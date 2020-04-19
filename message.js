@@ -28,7 +28,7 @@ const MESSAGES = {
     callBackSet: new Set([SEARCH, WATCH, EVENT, CANCEL]),
     withBetaAlertSet: new Set([WELCOME, WARNING, SEARCH, WATCH, CANCEL]),
     prioritySet: new Set([WELCOME, SEARCH, WATCH, CANCEL, WARNING]),
-    HTMLSet: new Set([WELCOME, STATUS, ABOUT, SEARCH, WATCH, EVENT, SHOW]),
+    HTMLSet: new Set([WELCOME, STATUS, ABOUT, SEARCH, WATCH, EVENT, SHOW, CANCEL]),
 
 }
 

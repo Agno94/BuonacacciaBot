@@ -64,6 +64,34 @@ class Replier {
                     }
                 ]];
                 break;
+            case (MESSAGES.CANCEL):
+                params = data;
+                let lastRow = [{
+                    callback_data: `${MESSAGES.CANCEL}/update/`,
+                    text: '🔄 Aggiorna elenchi',
+                }];
+                keyboard = [lastRow];
+                if (data.alarmEvents.length) {
+                    keyboard.unshift([{
+                        callback_data: `${MESSAGES.CANCEL}/del/alarm/`,
+                        text: '🛑🔔 Disattiva i promemoria',
+                    }]);
+                    lastRow.unshift({
+                        callback_data: `${MESSAGES.CANCEL}/show/alarm/`,
+                        text: 'Rimanda promemoria attivi',
+                    });
+                };
+                if (data.watchers.length) {
+                    keyboard.unshift([{
+                        callback_data: `${MESSAGES.CANCEL}/del/watch/`,
+                        text: '🛑👁‍🗨 Disattiva gli osservatori attivi',
+                    }]);
+                    lastRow.unshift({
+                        callback_data: `${MESSAGES.CANCEL}/show/watch/`,
+                        text: 'Rimanda osservatori attivi',
+                    });
+                };
+                break;
             default:
                 params = data;
         }
@@ -74,13 +102,29 @@ class Replier {
         //...
         if (MESSAGES.SHOW_BETA_ALERT && MESSAGES.withBetaAlertSet.has(type))
             msg.text += "\n" + TEMPLATES.BetaAlert;
+        if (MESSAGES.HTMLSet.has(type)) msg.option.parse_mode = 'HTML';
         return msg
+    }
+
+    update(replyObj, data) {
+        let message = this.createMessage(replyObj.type, { id: replyObj.chatID }, data);
+        this.chatQueued[replyObj.chatID] = (this.chatQueued[replyObj.chatID] || 0) + 1;
+        this.globalCounter += 1;
+        this.chatCounter[replyObj.chatID] = (this.chatCounter[replyObj.chatID] || 0) + 1;
+        message.option.chat_id = replyObj.chatID;
+        message.option.message_id = replyObj.msgID;
+        this._deliverMessage(message, "update").then(
+            this._onFinish(replyObj.chatID)
+        ).catch(
+            (e) => { console.log(e) }
+        )
+        // TO DO: implement queue
+        // TO DO: handle error
     }
 
     message(type, chat, data) {
         let message = this.createMessage(type, chat, data);
         let priority = MESSAGES.prioritySet.has(type);
-        if (MESSAGES.HTMLSet.has(type)) message.option.parse_mode = 'HTML';
         this.ref += 1;
         message.ref = this.ref;
         if (chat.type == "private") this.privateSet.add(chat.id);
@@ -107,14 +151,14 @@ class Replier {
                     this.queue.top.shift() :
                     this.queue.normal.shift();
                 if (this._isSendable(message.chat.id)) {
-                    this._doSend(message).then(
+                    this._deliverMessage(message).then(
                         (r) => r
                         // on success
                     ).catch(
                         (e) => Object({ ok: false, error: e })
                         // on error
                     ).then(
-                        this._onFinish(message.ref, message.chat.id)
+                        this._onFinish(message.chat.id, message.ref)
                     );
                     sent += 1;
                     this.chatCounter[message.chat.id] += 1;
@@ -167,17 +211,22 @@ class Replier {
         }
     }
 
-    async _doSend(message) {
-        //let message
+    async _deliverMessage(message, action = 'send') {
         let tries = MAX_ATTEMPTS;
         let success = false;
         let result;
         while (tries && !success) {
             try {
-                result = await this.bot.sendMessage(
-                    message.chat.id,
-                    message.text,
-                    message.option);
+                if (action == 'send') {
+                    result = await this.bot.sendMessage(
+                        message.chat.id,
+                        message.text,
+                        message.option);
+                } else if (action == 'update') {
+                    result = await this.bot.editMessageText(
+                        message.text,
+                        message.option);
+                }
                 success = true;
             } catch (e) {
                 console.error("Sender", e.name, e.message);
@@ -194,15 +243,16 @@ class Replier {
                         await wait(body.parameters.retry_after * 999);
                         this.chatQueued[chatID] -= 1;
                     }
+                    if (body.error_code == 400) return { ok: false, error_code: 400 };
                 }
             }
         }
         return result;
     }
 
-    _onFinish(ref, chatID) {
+    _onFinish(chatID, ref = 0) {
         return (function (r) {
-            this.responses[ref] = r;
+            if (ref) this.responses[ref] = r;
             delete this.sendActionTime[chatID];
             if (r.chat && (r.chat.type == "private")) this.privateSet.add(r.chat.id);
             setTimeout(() => {

@@ -114,4 +114,22 @@ Quando non vuoi più ricevere questi messaggi scrivimi <u>/annulla_${p.id}</u>`
     return msg
 }
 
+TEMPLATES[MESSAGES.CANCEL] = (p) => {
+    function createList(list) {
+        if (!list.length) return "nessun elemento presente"
+        return list.reduce( (msg, element) => msg + `
+🔸 ${element}`,"")
+    }
+    return `
+🗑 Rimozione di promemoria ed osservatori
+
+Se vuoi che non ti mandi più promemoria per eventi o avvisi quando un osservatore trova un evento che ti intessa clicca sotto.
+Per disattivare i promemoria per i singoli eventi o gli avvisi per i singoli osservatori, usa tasti nel messaggio corrispondente.
+Se non hai più i messaggi posso rimandarli.
+
+Elenco degli osservatori attivi: ${createList(p.watchers)}
+
+Elenco degli eventi con promemoria attivo: ${createList(p.alarmEvents)}`
+}
+
 module.exports = { TEMPLATES }

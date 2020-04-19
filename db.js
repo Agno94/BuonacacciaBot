@@ -129,7 +129,9 @@ module.exports = function (sequelize, DateTypes) {
     }, {});
 
     Alarm.belongsTo(BCEvent, { onDelete: 'cascade' });
+    BCEvent.hasMany(Alarm);
     Alarm.belongsTo(Reply, { onDelete: 'cascade' });
+    Reply.hasMany(Alarm);
 
     const ChatSession = sequelize.define('chat_session', {
         chatId: {
@@ -161,6 +163,6 @@ module.exports = function (sequelize, DateTypes) {
         }
     }, {});
 
-    return { BCEvent, BCLog, Watcher, Reply, ChatSession }
+    return { BCEvent, BCLog, Watcher, Reply, Alarm, ChatSession }
 
 }

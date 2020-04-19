@@ -1,7 +1,7 @@
 const ZONES = {};
 ZONES.LIST = [
     {
-        code: 0,
+        code: 5,
         human: "Nazionale"
     }, {
         code: 1,
@@ -25,7 +25,7 @@ REGIONI.LIST = [
         bchuman: 'Nazionale',
         code: 'A',
         human: 'Nazionale',
-        zone: 0
+        zone: 5
     }, {
         bccode: 'B',
         bchuman: 'Abruzzo',
@@ -436,6 +436,7 @@ CATEGORIES.LIST.forEach(element => {
     CATEGORIES.CHOICES.push(element.code);
 });
 CATEGORIES.SET = new Set(CATEGORIES.CHOICES);
+CATEGORIES.EMOJI = (c) => BRANCHE[CATEGORIES[c].branca].emoji;
 
 const COLLECTIONS = {
     SPECIALS: [

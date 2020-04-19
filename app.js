@@ -429,20 +429,114 @@ bot.onText(/\/mostra[ _]*([0-9]*)/, Session.runWith(async (msg, match) => {
   }
 }));
 
-bot.onText(/\/annulla[ _]*([0-9])+/, Session.runWith((msg, match) => {
+async function cancelFindList(chatID, searchWatchers = true, searchAlarms = true) {
+  let watchersQuery = [];
+  let alarmEventsQuery = [];
+  if (searchWatchers) {
+    watchersQuery = Watcher.findAll({
+      where: { chatId: chatID, expiredate: { [Op.gte]: new Date() } },
+      attributes: ['category', 'regione'],
+    }).then((r) => r.map(
+      (w) => `Tipo ${CATEGORIES.EMOJI(w.category)}${CATEGORIES[w.category].human} regione ${REGIONI[w.regione].human}`
+    ));
+  }
+  if (searchAlarms) {
+    alarmEventsQuery = BCEvent.findAll({
+      include: [{
+        model: Alarm,
+        where: { warning: true },
+        include: [{
+          model: Reply,
+          where: { chatID: chatID },
+        }]
+      }],
+      attributes: ['category', 'regione', 'location'],
+    }).then((r) => r.map(
+      (e) => `${CATEGORIES.EMOJI(e.category)}${CATEGORIES[e.category].human} presso ${e.location}(${REGIONI[e.regione].human})`
+    ));
+  }
+  let data = {
+    watchers: await watchersQuery,
+    alarmEvents: await alarmEventsQuery,
+  };
+  // data.watchers = await watchersQuery;
+  // data.alarmEvents = await alarmEventsQuery;
+  return data;
+}
+
+async function cancelHandler(msg, match) {
+  console.log("annulla called");
   try {
     let wid = Number(match[1]);
-    Watcher.destroy({
-      where: { id: wid }
-    }).then((r) => {
-      console.log("del", r);
-      bot.sendMessage(msg.chat.id, TEMPLATES.BetaAlert + "\nEliminato", { parse_mode: 'HTML' });
-    });
+    console.log("wid", wid)
+    if (wid) {
+      let single = Watcher.findByPk(wid).then(
+        async (r) => {
+          console.log("r", r);
+          await r.destroy();
+          bot.sendMessage(msg.chat.id, "Eliminato", {});
+          return true;
+        }).catch((e) => { console.log(e); return false });
+      console.log("single", single);
+      if (single) return;
+    }
   } catch (e) {
-    sendError(msg);
-    console.log("Errore", e);
+    console.log("Error on \/anulla, old part", e);
   }
-}));
+  cancelFindList(msg.chat.id).then(data => {
+    reply.message(MESSAGES.CANCEL, msg.chat, data);
+  }, (e) => {
+    console.error("Error on \/annulla", e);
+    sendError();
+  });
+}
+
+async function cancelCallback(replyObj, action = "", target = "") {
+  update = async () => await cancelFindList(replyObj.chatID).then(
+    data => { reply.update(replyObj, data); },
+    (e) => {
+      console.error("Error on \/annulla", e);
+      sendError();
+    });
+  try {
+    switch (action) {
+      case ("del"):
+        if (target == "watch") {
+          await Watcher.destroy({
+            where: { chatId: replyObj.chatID },
+          }).catch(catchAndLogError);
+          // TO DO: change watchers replies text
+          await update().catch(catchAndLogError);
+          return [true, "Osservatori Eliminati"];
+        } else if (target == "alarm") {
+          // await Alarm.update(
+          // { warning: false },
+          // { include: [{ model: Reply, where: { chatID: chatID }, }] }
+          // );
+          await sequelize.query(
+            `UPDATE alarms SET warning = false FROM alarms a INNER JOIN replies r ON a."replyId" = r."id" AND r."chat_id" = :chatID`,
+            { replacements: { chatID: replyObj.chatID }, type: sequelize.QueryTypes.UPDATE },
+          );
+          // TO DO: change watchers replies text
+          await update().catch(catchAndLogError);
+          return [true, "Promemoria disattivati"];
+        }
+        break;
+      case ("show"):
+        return [false, "Non ancora implemantato"];
+        break;
+      case ("update"):
+        update();
+        return [true, ""];
+    }
+  } catch (e) {
+    console.error(e);
+    return [false, "A bot error"];
+  }
+  return [false, "Invalid parameters"];
+}
+
+bot.onText(/\/annulla[ _]*([0-9]*)/, Session.runWith(cancelHandler));
 
 bot.onText(/\/promemoria[ _]*$/, Session.runWith((msg, match) => {
   bot.sendMessage(msg.chat.id, TEMPLATES.BetaAlert + "\nNon ancora implementato", { parse_mode: 'HTML' });
@@ -452,9 +546,9 @@ bot.on('callback_query', async (query) => {
   const { message: { chat, message_id } = {}, data } = query;
   function exitWithAlert(e) {
     console.error(`Callback error: message ${message_id} chat ${chat.id}: ${e}`);
-    console.log(query.data);
+    console.error("  data: ", query.data);
     bot.answerCallbackQuery(query.id, {
-      text: "Invalid query",
+      text: `Error: ${e}`,
       show_alert: false,
     });
   };
@@ -469,15 +563,18 @@ bot.on('callback_query', async (query) => {
     },
   });
   if (messages.count != 1) return exitWithAlert(`${messages.count} replies`);
-  let message = messages.rows[0];
-  if (type != message.type) return exitWithAlert(`Mismatching types`);
+  let replyObj = messages.rows[0];
+  if (type != replyObj.type) return exitWithAlert(`Mismatching types`);
+  let status, text;
   switch (type) {
     case (MESSAGES.CANCEL):
+      [status, text] = await cancelCallback(replyObj, ...callback_params.slice(1));
       break;
     default:
       bot.answerCallbackQuery(query.id, { text: "Non implementato", });
   }
-  console.log(message, message.dataValues);
+  if (!status) return exitWithAlert(text);
+  if (text) bot.answerCallbackQuery(query.id, { text: text });
 });
 
 // ON SIGINT OR SIGTERM

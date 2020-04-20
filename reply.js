@@ -15,8 +15,52 @@ const MAX_ATTEMPTS = 3;
 
 const { MESSAGES, SELECTION } = require("./message.js");
 const { TEMPLATES } = require("./templates.js");
+const { REGIONI, ZONES, CATEGORIES, BRANCHE, COLLECTIONS } = require("./data.js");
 
 wait = (ms) => new Promise(r => setTimeout(r, ms));
+
+function selectionKeyboard(type, step, data) {
+    let buttons = [];
+    switch (step) {
+        case (SELECTION.BRANCA):
+            buttons = BRANCHE.LIST.map((b) => Object({
+                callback_data: SELECTION.callbackData(type, b.code),
+                text: `${b.emoji} ${b.human}`,
+            }));
+            break;
+        case (SELECTION.CATEGORY):
+            data.emoji = BRANCHE[data.branca].emoji;
+            buttons = BRANCHE[data.branca].CATEGORIES.map((c) => Object({
+                callback_data: SELECTION.callbackData(type, data.branca, c.code),
+                text: `${data.emoji} ${c.human}`
+            }));
+            break;
+        case (SELECTION.ZONE):
+            buttons = ZONES.LIST.map((z) => Object({
+                callback_data: SELECTION.callbackData(type, data.branca, data.cat, z.code),
+                text: `${z.human}`
+            }));
+            break;
+        case (SELECTION.REGIONE):
+            let list = data.forcedKeyboard || ZONES[data.zone].REGIONI;
+            buttons = list.map((r) => Object({
+                callback_data: SELECTION.callbackData(type, data.branca, data.cat, data.zone, r.code),
+                text: `📌️ ${r.human}`
+            }));
+            break;
+    }
+    if (step > SELECTION.BRANCA) {
+        let back = data.selectedParams.slice(0, data.backstep);
+        buttons.push({
+            callback_data: SELECTION.callbackData(type, ...back),
+            text: `🔙 Indietro`
+        });
+    }
+    let keyboard = [];
+    for (let i = 0; i < buttons.length; i += 2)
+        keyboard.push(buttons.slice(i, i + 2));
+    return keyboard
+}
 
 class Replier {
 
@@ -94,8 +138,34 @@ class Replier {
                 break;
             case (MESSAGES.SEARCH):
                 params = data;
-                // if
+                if (data.step < SELECTION.COMPLETE) {
+                    keyboard = selectionKeyboard(MESSAGES.SEARCH, data.step, data);
+                } else {
+                    keyboard = [];
+                    if (data.status == "complete") {
+                        keyboard.push([{
+                            text: '😎 Mostra risultati',
+                            callback_data: `${MESSAGES.SEARCH}/show/`,
+                        }]);
+                    }
+                    if (data.status == "end") {
+                        keyboard.push([{
+                            text: '🔄️ Ripeti',
+                            callback_data: `${MESSAGES.SEARCH}/repeat/`,
+                        }, {
+                            text: '🚀️ Ricomincia',
+                            callback_data: `${MESSAGES.SEARCH}/restart/`,
+                        }]) 
+                    }
+                }
                 break;
+            case (MESSAGES.WATCH):
+                params = data;
+                if (data.step < SELECTION.COMPLETE) {
+                    keyboard = selectionKeyboard(MESSAGES.WATCH, data.step, data);
+                } else {
+                    keyboard = [];
+                }
             default:
                 params = data;
         }
@@ -120,7 +190,7 @@ class Replier {
         this._deliverMessage(message, "update").then(
             this._onFinish(replyObj.chatID)
         ).catch(
-            (e) => { console.log(e) }
+            (e) => { console.error(e) }
         )
         // TO DO: implement queue
         // TO DO: handle error
@@ -249,7 +319,10 @@ class Replier {
                         await wait(result.parameters.retry_after * 999);
                         this.chatQueued[chatID] -= 1;
                     }
-                    if (result.error_code == 400) return result;
+                    if (result.error_code == 400)
+                        return result;
+                    if (result.error_code == 404)
+                        delete message.option.reply_to_message_id;
                 }
             }
         }
@@ -258,7 +331,6 @@ class Replier {
 
     _onFinish(chatID, ref = 0) {
         return (function (r) {
-            console.log("onfinish", r.message_id);
             if (ref) this.responses[ref] = r;
             delete this.sendActionTime[chatID];
             if (r.chat && (r.chat.type == "private")) this.privateSet.add(r.chat.id);
@@ -271,14 +343,14 @@ class Replier {
         }).bind(this)
     }
 
-    async save(type, ref, status = {}) {
+    async save(type, ref, extraData = null) {
         let response = await this.response(ref);
         if (response && response.chat && response.message_id) {
             let [obj, ok] = await this.Reply.create({
                 type: type,
                 msgID: response.message_id,
                 chatID: response.chat.id,
-                status: status
+                data: extraData
             }).then(
                 obj => [obj, true]
             ).catch((e) => [e, false])

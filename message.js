@@ -44,6 +44,10 @@ SELECTION = {
     ZONE: ZONES_SELECTION,
     REGIONE: REG_SELECTION,
     COMPLETE: COMPLETE_SELECTION,
+
+    callbackData: function (type, b = '', c = '', z = '', r = '') {
+        return `${type}/select/${b}/${c}/${z}/${r}`;
+    }
 }
 
 module.exports = { MESSAGES, SELECTION };

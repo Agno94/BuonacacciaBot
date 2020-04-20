@@ -2,7 +2,7 @@ const ZONES = {};
 ZONES.LIST = [
     {
         code: 5,
-        human: "Nazionale"
+        human: "🇮🇹️ Nazionale"
     }, {
         code: 1,
         human: "Nord"
@@ -368,26 +368,25 @@ CATEGORIES.LIST = [
     }
 ]
 
-//ZONES.REGIONI = {};
+ZONES.CHOICES = []
 ZONES.LIST.forEach(element => {
     ZONES[element.code] = element;
+    ZONES.CHOICES.push(element.code);
     element.REGIONI = [];
     element.SET = new Set();
 });
+ZONES.SET = new Set(ZONES.CHOICES);
 
 REGIONI.BCHUMAN2CODE = {};
 REGIONI.CHOICES = [];
 REGIONI.BCCODE2CODE = {};
-// REGIONI.CODE2BCCODE = {};
 REGIONI.HUMAN2CODE = {};
 REGIONI.COMMAND2CODE = {};
-// REGIONI.CODE2HUMAN = {};
 
 REGIONI.LIST.forEach(element => {
     REGIONI[element.code] = element;
     element.command = element.human.replace(/[' ]/g, "").toLowerCase();
 
-    // ZONES[element.zone].REGIONI.push(element.code);
     ZONES[element.zone].REGIONI.push(element);
     ZONES[element.zone].SET.add(element.code);
 
@@ -396,31 +395,24 @@ REGIONI.LIST.forEach(element => {
     REGIONI.COMMAND2CODE[element.command] = element.code;
     REGIONI.CHOICES.push(element.code);
     REGIONI.BCCODE2CODE[element.bccode] = element.code;
-
-
-    // ZONES.REGIONI[element.zone].push(element.code);
-
-    // REGIONI.CODE2BCCODE[element.code] = element.bccode;
-    // REGIONI.CODE2HUMAN[element.code] = element.human;
 });
 REGIONI.SET = new Set(REGIONI.CHOICES);
 
+BRANCHE.CHOICES = [];
 BRANCHE.LIST.forEach(element => {
     BRANCHE[element.code] = element;
+    BRANCHE.CHOICES.push(element.code);
     element.CATEGORIES = [];
     element.SET = new Set();
 });
+BRANCHE.SET = new Set(BRANCHE.CHOICES);
 
 CATEGORIES.BCGRID2CODE = {};
-// CATEGORIES.CODE2BCCODE = {};
-// CATEGORIES.CODE2HUMAN = {};
 CATEGORIES.BCCODE2CODE = {};
 CATEGORIES.CHOICES = [];
-// CATEGORIES.FROMCODE = {};
 CATEGORIES.IMG2CODE = {};
 CATEGORIES.LIST.forEach(element => {
     CATEGORIES[element.code] = element;
-    // BRANCHE[element.branca].CATEGORIES.push(element.code);
     BRANCHE[element.branca].CATEGORIES.push(element);
     BRANCHE[element.branca].SET.add(element.code);
     if (element.bcgridhuman) {
@@ -429,9 +421,6 @@ CATEGORIES.LIST.forEach(element => {
         let branca = BRANCHE.LIST[element.branca - 1];
         CATEGORIES.IMG2CODE[branca.img] = element.code;
     }
-    // CATEGORIES.FROMCODE[element.code] = element;
-    // CATEGORIES.CODE2BCCODE[element.code] = element.bccode;
-    // CATEGORIES.CODE2HUMAN[element.code] = element.human;
     CATEGORIES.BCCODE2CODE[element.bccode] = element.code;
     CATEGORIES.CHOICES.push(element.code);
 });

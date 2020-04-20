@@ -113,7 +113,7 @@ let startJobBot = bot.getMe().then((r) => {
   process.exit(1);
 })
 
-// Watcher Send Message
+// WATCHER EVENT NOTIFICATION
 
 async function watchEvent() {
   console.log("Looking for unwatched events");
@@ -161,276 +161,246 @@ async function watchEvent() {
   }
 }
 
-// Bot
+// SEARCH AND WATCH FUNCTIONS
 
-bot.onText(/\/start/, Session.runWith(
-  (msg, match) => {
-    const chatId = msg.chat.id;
-    console.log("\/start received by", chatId);
-    reply.message(MESSAGES.WELCOME, msg.chat, {});
-  }));
+function parseSelection(branca, cat, zone, reg) {
+  // Validate parameters and determine current selection's step
+  if (!(BRANCHE[branca] && (BRANCHE[branca].code == branca))) branca = false;
+  if (!(CATEGORIES[cat] && (CATEGORIES[cat].code == cat))) cat = false;
+  if ((!branca) && cat) branca = CATEGORIES[cat].branca;
+  if (branca && !(cat) && (BRANCHE[branca].CATEGORIES.length == 1)) {
+    cat = BRANCHE[branca].CATEGORIES[0].code;
+    branca = '';
+  }
+  if (!(ZONES[zone] && (ZONES[zone].code == zone))) zone = false;
+  if (!(REGIONI[reg] && (REGIONI[reg].code == reg)))
+    reg = REGIONI.COMMAND2CODE[reg] || false;
+  if ((!zone) && reg) zone = REGIONI[reg].zone;
+  if (zone && !(reg) && (ZONES[zone].REGIONI.length == 1)) {
+    reg = ZONES[zone].REGIONI[0].code;
+    zone = '';
+  }
+  let step = SELECTION.COMPLETE;
+  if (!cat) {
+    step = (branca) ? SELECTION.CATEGORY : SELECTION.BRANCA;
+  } else {
+    if (!reg) step = (zone) ? SELECTION.REGIONE : SELECTION.ZONE;
+  }
+  let response = { step: step, backstep: step - 2 };
+  if (branca) response.branca = branca;
+  if (cat) response.cat = cat;
+  if (zone) response.zone = zone;
+  if (reg) response.reg = reg;
+  response.selectedParams = [branca, cat, zone, reg].slice(0, step - 1);
+  console.log("Selected parameters", JSON.stringify(response));
+  return response;
+}
 
-function search(msg, chatId, categoryID, regioneID) {
-  console.log("cerca", chatId, categoryID, regioneID);
-  BCEvent.findAndCountAll({
+async function searchProcess(selectionObj) {
+  if (selectionObj.step < SELECTION.ZONE)
+    return [selectionObj, { status: 'select' }];
+  if (selectionObj.step < SELECTION.COMPLETE) {
+    // Add results grouped by regione
+    let list = await BCEvent.count({
+      where: { category: selectionObj.cat, startdate: { [Op.gte]: today() } },
+      attributes: ["regione"],
+      group: ['regione']
+    });
+    selectionObj.list = list;
+    // Only display regioni with events
+    if (list.length <= 8) {
+      selectionObj.step = SELECTION.REGIONE;
+      selectionObj.forcedKeyboard = list.map((row) => REGIONI[row.regione]);
+    }
+    return [selectionObj, { status: 'select' }];
+  }
+  // Search is complete
+  let count = await BCEvent.count({
     where: {
       startdate: { [Op.gte]: today() },
-      regione: regioneID,
-      category: categoryID,
-    }
-  }).then(async (r) => {
-    let reply_data = {
-      step: SELECTION.COMPLETE,
-      cat: categoryID,
-      reg: regioneID,
-      emoji: BRANCHE[CATEGORIES[categoryID].branca].emoji,
-      count: r.count,
-    }
-    if (r.count > MAX_FIND_RESULTS) {
-      let status = msg.session.status;
-      status.hasEventList = true;
-      status.eventList = r.rows.map((e) => e.dataValues);
-      msg.session.save({ fields: ['status'] }).catch(
-        (e) => console.log("error updating session", e)
-      )
-      reply_data.many = true;
-      reply.message(MESSAGES.SEARCH, { id: chatId }, reply_data);
-    } else {
-      if (r.count) {
-        let msgRefs = r.rows.map(
-          (item) => reply.message(MESSAGES.EVENT, { id: chatId }, {
-            event: item.dataValues,
-          })
-        );
-        for (const ref of msgRefs) {
-          let [response, ok] = await reply.save(MESSAGES.EVENT, ref).then(
-            (r) => [r, true], (e) => [e, false]
-          );
-          if (!ok) console.log("Error sending Search Results", response);
-        }
-      }
-      reply.message(MESSAGES.SEARCH, { id: chatId }, reply_data);
+      regione: selectionObj.reg,
+      category: selectionObj.cat,
     }
   }).catch(e => {
     console.log("Search failed");
     console.log(e);
+    return -1;
   });
+  reply_data = {
+    step: SELECTION.COMPLETE,
+    status: "complete",
+    cat: selectionObj.cat,
+    reg: selectionObj.reg,
+    count: count,
+  };
+  extra_data = {
+    status: "complete",
+    cat: selectionObj.cat,
+    reg: selectionObj.reg,
+  };
+  return [reply_data, extra_data];
 }
 
-function watch(msg, chat_id, cat, reg) {
-  console.log("osserva", msg.chat, cat, reg);
-  Watcher.findOrCreate({
+async function searchCallback(replyObj, action = "", ...params) {
+  if (action == "select") {
+    if (replyObj.data.status != "select") return [false, "Ricerca terminata"];
+    let selectionObj = parseSelection(...params);
+    let [reply_data, extra_data] = await searchProcess(selectionObj).catch(catchAndLogError);
+    if (JSON.stringify(extra_data) != JSON.stringify(replyObj.data)) {
+      replyObj.update({ data: extra_data }).catch(catchAndLogError)
+    }
+    reply.update(replyObj, reply_data);
+    return [true, ''];
+  }
+  if (action == "show") {
+    if (replyObj.data.status != "complete") return [false, "Ricerca non conclusa"];
+    if (!(replyObj.data.reg && replyObj.data.cat)) return [false, "Missing data"];
+    let chatID = replyObj.chatID;
+    let searchResults = await BCEvent.findAndCountAll({
+      where: {
+        startdate: { [Op.gte]: today() },
+        regione: replyObj.data.reg,
+        category: replyObj.data.cat,
+      },
+      raw: true,
+    }).catch(e => { console.error("Error looking for results", e); return [] })
+    let promises = searchResults.rows.map(
+      (item) => {
+        let ref = reply.message(MESSAGES.EVENT, { id: chatID }, { event: item });
+        return reply.save(MESSAGES.EVENT, ref)
+      });
+    let extra_data = Object(replyObj.data);
+    extra_data.status = "end";
+    promises.push(replyObj.update({ data: extra_data }));
+    promises = promises.map(
+      (p) => (p.then((r) => true, (e) => {
+        console.error("Error sending Search Results", response);
+        return false
+      }))
+    );
+    let reply_data = Object(extra_data);
+    reply_data.step = SELECTION.COMPLETE;
+    reply_data.count = searchResults.count;
+    reply.update(replyObj, reply_data);
+    if (!promises.every(async (p) => (await p))) {
+      return [false, "Errore nell'invio dei messaggi"];
+    }
+    return [true, "Risultati inviati"]
+  }
+  if (action == "repeat") {
+    if (replyObj.data.status != "end") return [false, "Ricerca non terminata"];
+    let selectionObj = parseSelection('', replyObj.data.cat, '', replyObj.data.reg);
+    let [reply_data, extra_data] = await searchProcess(selectionObj)
+    replyObj.update({ data: extra_data }).catch(catchAndLogError)
+    reply.update(replyObj, reply_data);
+    return [true, ''];
+  }
+  if (action == "restart") {
+    if (replyObj.data.status != "end") return [false, "Ricerca non terminata"];
+    let [reply_data, extra_data] = await searchProcess(parseSelection())
+    replyObj.update({ data: extra_data }).catch(catchAndLogError);
+    reply.update(replyObj, reply_data);
+    return [true, ''];
+  }
+  return [false, 'Invalid action'];
+}
+
+async function watcherProcess(selectionObj, chatID) {
+  if (selectionObj.step < SELECTION.COMPLETE)
+    return [selectionObj, false];
+  let [ok, result] = await Watcher.findOrCreate({
     where: {
-      chatId: chat_id,
-      category: cat,
-      regione: reg,
+      chatId: chatID,
+      category: selectionObj.cat,
+      regione: selectionObj.reg,
     },
     default: { expiredate: new Date() }
-  }).then(async (r) => {
-    let watcher = r[0];
-    let wid = watcher.id;
-    watcher.expiredate = new Date(today().getTime() + 2 * 365 * 24 * 3600 * 1000);
-    let ref = reply.message(MESSAGES.WATCH, msg.chat, {
-      step: SELECTION.COMPLETE,
-      cat: cat,
-      reg: reg,
-      emoji: BRANCHE[CATEGORIES[cat].branca].emoji,
-      id: wid,
-    });
-    let resp = await reply.response(ref);
-    watcher.msgId = resp.message_id;
-    await watcher.save();
-  }, (e) => {
-    sendError(msg);
-    console.log("Error in watch on findOrCreate", e);
-  }).catch((e) => {
-    sendError(msg);
-    console.log("Error in watch", e);
-  }).finally(
-    () => console.log("watcher added")
+  }).then(
+    (r) => [true, r[0]],
+    (e) => [false, e]
   );
+  if (!ok) {
+    console.error("On watcher findOrCreate", result);
+    throw Error(result);
+  };
+  result.set('expiredate', new Date(today().getTime() + 2 * 365 * 24 * 3600 * 1000));
+  selectionObj.status = "active";
+  return [selectionObj, result];
 }
 
-function paramsAndRun(F, msg, cat, reg) {
-  if (CATEGORIES.SET.has(cat)) {
-    let h = reg.trim().replace(/[_ 'x]/g, "").toLowerCase();
-    let r = REGIONI.COMMAND2CODE[h];
-    if (!r) {
-      let status = msg.session.status;
-      status.askedForRegione = true;
-      status.regioneUsedFor = F;
-      type = { 'search': MESSAGES.SEARCH, 'watch': MESSAGES.WATCH }[F];
-      status.regioneUsedWith = [cat];
-      BCEvent.count({
-        where: { category: cat },
-        attributes: ["regione"],
-        group: ['regione']
-      }).then((list) => {
-        let reply_data = {
-          step: SELECTION.REGIONE,
-          emoji: BRANCHE[CATEGORIES[cat].branca].emoji,
-          cat: cat,
-          list: list,
-        };
-        let ref = reply.message(type, msg.chat, reply_data)
-      })
+async function watchCallback(replyObj, action = "", ...params) {
+  if (action == "select") {
+    if (replyObj.data.status != 'select') return [false, "Osservatore completo"];
+    let selectionObj = parseSelection(...params);
+    let [reply_data, watcher] = await watcherProcess(selectionObj, replyObj.chatID);
+    if (watcher) {
+      replyObj.update({ data: { status: 'active', id: watcher.id } });
+      watcher.msgId = replyObj.msgID;
+      await watcher.save()
     }
-    return [cat, r];
-  } else {
-    return [false, false];
+    reply.update(replyObj, reply_data);
+    if (!watcher) return [true, 'Scegli l\'opzione'];
+    return [true, 'Creato']
   }
 }
 
-function selectRegione(msg, regione_cmd) {
-  console.log(regione_cmd);
-  let status = msg.session.status;
-  if (!status.askedForRegione) {
-    bot.sendMessage(msg.chat.id, "help TO DO");
-    return;
-  }
-  let regione = REGIONI.COMMAND2CODE[regione_cmd];
-  let command = status.regioneUsedFor;
-  let args = status.regioneUsedWith;
-  if (!regione) {
-    let cat = args[0];
-    BCEvent.count({
-      where: { category: cat },
-      attributes: ["regione"],
-      group: ['regione']
-    }).then((list) => {
-      let reply_data = {
-        step: SELECTION.REGIONE,
-        emoji: BRANCHE[CATEGORIES[cat].branca].emoji,
-        cat: cat,
-        list: list,
-      };
-      type = { 'search': MESSAGES.SEARCH, 'watch': MESSAGES.WATCH }[command];
-      let ref = reply.message(type, msg.chat, reply_data)
-    })
-    return;
-  }
-  delete status.askedForRegione;
-  delete status.regioneUsedFor;
-  delete status.regioneUsedWith;
-  if (command == "search") {
-    search(msg, msg.chat.id, args[0], regione);
-  } else if (command == "watch") {
-    watch(msg, msg.chat.id, args[0], regione)
-  } else {
-    console.error("Unhandled command", command);
-  }
-};
-
+// BOT: SET UP SEARCH AND WATCH FUNCTION
 
 bot.onText(/\/cerca[ _]*$/, Session.runWith((msg, match) => {
-  console.log("onText \/cerca");
-  const chatId = msg.chat.id;
-  reply.message(MESSAGES.SEARCH, msg.chat, { step: SELECTION.CATEGORY, });
+  let ref = reply.message(MESSAGES.SEARCH, msg.chat, { step: SELECTION.BRANCA, });
+  reply.save(MESSAGES.SEARCH, ref, { status: 'select' });
 }));
 
-bot.onText(/\/cerca[ _]+([a-z0-9]+)[ _]*(.*)/, Session.runWith((msg, match) => {
-  console.log("onText \/cerca_CAT", match);
-  let [category, regione] = paramsAndRun("search", msg, match[1].toLowerCase(), match[2]);
-  if (!category) {
-    reply.message(MESSAGES.SEARCH, msg.chat, { step: SELECTION.CATEGORY, });
-    return;
-  }
-  if (!regione) return;
-  const chatId = msg.chat.id;
-  search(msg, chatId, category, regione);
+bot.onText(/\/cerca[ _]+([a-zA-Z0-9]*)[ _]*(.*)/, Session.runWith((msg, match) => {
+  let c = match[1].toLowerCase();
+  let r = match[2].trim().replace(/[_ 'x]/g, "").toLowerCase();
+  let selectionObj = parseSelection('', c, '', r);
+  let [reply_data, status] = searchProcess(selectionObj);
+  let ref = reply.message(MESSAGES.SEARCH, msg.chat, reply_data);
+  reply.save(MESSAGES.WATCH, ref, status);
 }));
 
 bot.onText(/\/osserva[ _]*$/, Session.runWith((msg, match) => {
-  console.log("on Text \/osserva");
-  reply.message(MESSAGES.WATCH, msg.chat, { step: SELECTION.CATEGORY, });
+  let ref = reply.message(MESSAGES.WATCH, msg.chat, { step: SELECTION.BRANCA, });
+  reply.save(MESSAGES.WATCH, ref, { status: 'select' });
 }));
 
-bot.onText(/\/osserva[ _]+([a-z0-9]+)[ _]*(.*)/, Session.runWith((msg, match) => {
-  console.log("onText \/osserva_..._...", match);
-  let [category, regione] = paramsAndRun("watch", msg, match[1], match[2]);
-  if (!category) {
-    reply.message(MESSAGES.WATCH, msg.chat, { step: SELECTION.CATEGORY, });
-    return;
+bot.onText(/\/osserva[ _]+([a-zA-Z0-9]+)[ _]*(.*)/, Session.runWith(async (msg, match) => {
+  let c = match[1].toLowerCase();
+  let r = match[2].trim().replace(/[_ 'x]/g, "").toLowerCase();
+  let selectionObj = parseSelection('', c, '', r);
+  let extra_data = { status: 'select' };
+  let [reply_data, watcher] = await watcherProcess(selectionObj, msg.chat.id);
+  let ref = reply.message(MESSAGES.WATCH, msg.chat, reply_data);
+  if (watcher) {
+    response = await reply.response(ref);
+    watcher.msgId = response.message_id;
+    extra_data = { data: { status: 'active', id: watcher.id } };
+    reply.save(MESSAGES.WATCH, ref, extra_data);    
+    await watcher.save()
   }
-  if (!regione) return;
-  const chatId = msg.chat.id;
-  watch(msg, chatId, category, regione);
 }));
 
-bot.onText(/\/nazionale[ _]*/, Session.runWith((msg, match) => {
-  selectRegione(msg, "nazionale");
-}));
+function oldWarning(msg, match) {
+  bot.sendmessage(msg.chat.id, "❌️ SONO CAMBIATO: usa /cerca o /osserva");
+}
 
-bot.onText(/\/regione[ _]*([A-Za-z _]*)/, Session.runWith((msg, match) => {
-  selectRegione(msg, match[1].replace(/[_ ]/g, "").toLowerCase());
-}));
+bot.onText(/\/nazionale[ _]*/, oldWarning);
 
-bot.onText(/\/tutti[ _]*$/, Session.runWith(async (msg, match) => {
-  let status = msg.session.status;
-  if (!status.askedForRegione) {
-    bot.sendMessage(msg.chat.id, "help TO DO");
-    return;
-  }
-  let cat = status.regioneUsedWith[0];
-  let list = await BCEvent.count({ where: { category: cat }, attributes: ["regione"], group: ['regione'] });
-  let reply_data = {
-    step: SELECTION.REGIONE,
-    emoji: BRANCHE[CATEGORIES[cat].branca].emoji,
-    cat: cat,
-    list: list,
-  };
-  type = { 'search': MESSAGES.SEARCH, 'watch': MESSAGES.WATCH }[status.regioneUsedFor];
-  let ref = reply.message(type, msg.chat, reply_data)
-  await reply.response(ref);
-  bot.sendMessage(msg.chat.id, "⚠️ La selezione di più regioni non è stata implementata 🚧");
-}));
+bot.onText(/\/regione.*/, oldWarning);
 
-// Show search results
-bot.onText(/\/mostra[ _]*([0-9]*)/, Session.runWith(async (msg, match) => {
-  console.log("onText \/mostra", match[1]);
-  let no_events;
-  try {
-    no_events = Number(match[1] || "10000")
-  } catch (e) {
-    console.log("Error on \/mostra", e)
-    return;
-  }
-  let chatId = msg.chat.id;
-  let status = msg.session.status;
-  while (status.temp.isSendingEventList) {
-    await wait(200);
-  }
-  if (status.hasEventList) {
-    let len = status.eventList.length;
-    no_events = Math.min(no_events, len);
-    status.temp.isSendingEventList = true;
-    await bot.sendMessage(chatId,
-      `Sto per inviare i dettagli di <b>${no_events}</b> eventi`, { parse_mode: 'HTML' })
-    try {
-      let send_list = status.eventList.slice(0, no_events);
-      status.eventList = status.eventList.slice(no_events);
-      let msg_refs = send_list.map(
-        (item) => reply.message(MESSAGES.EVENT, msg.chat, { event: item })
-      );
-      for (const ref of msg_refs) {
-        let [response, ok] = await reply.save(MESSAGES.EVENT, ref).then(
-          (r) => [r, true], (e) => [e, false]
-        );
-        if (!ok) console.log("Error sending Search Results", response);
-      }
-    } catch (e) {
-      sendError(msg);
-      console.log("Error showing results:", e);
-    }
-    status.hasEventList = Boolean(status.eventList.length);
-    delete status.temp.isSendingEventList;
-    if (status.hasEventList)
-      reply.message(MESSAGES.SHOW, msg.chat, { count: status.eventList.length });
-    else delete status.hasEventList;
-  } else {
-    bot.sendMessage(chatId, "Nessun messaggio da mostrare"); // TO DO: reply-to
-  }
-}));
+bot.onText(/\/tutti[ _]*$/, oldWarning);
+
+bot.onText(/\/mostra[ _]*([0-9]*)/, oldWarning);
+
+
+// EVENT AND ALARM
+
+async function eventCallback(replyObj, action = "", ...params) {
+  return [false, "Non implementato"];
+}
+
+// CANCEL ACTIVE WATCHER OR ALARM
 
 async function cancelFindList(chatID, searchWatchers = true, searchAlarms = true) {
   let watchersQuery = [];
@@ -549,9 +519,7 @@ async function cancelCallback(replyObj, action = "", target = "") {
 
 bot.onText(/\/annulla[ _]*([0-9]*)/, Session.runWith(cancelHandler));
 
-bot.onText(/\/promemoria[ _]*$/, Session.runWith((msg, match) => {
-  bot.sendMessage(msg.chat.id, TEMPLATES.BetaAlert + "\nNon ancora implementato", { parse_mode: 'HTML' });
-}))
+// CALLBACK QUERY HANDLER
 
 bot.on('callback_query', async (query) => {
   const { message: { chat, message_id } = {}, data } = query;
@@ -564,7 +532,7 @@ bot.on('callback_query', async (query) => {
     });
   };
   Session.callback(chat.id);
-  let callback_params = data.split("/").map(l => l.trim()).filter(l => l);
+  let callback_params = data.split("/").map(l => l.trim());//.filter(l => l);
   let type = callback_params[0];
   if (!MESSAGES.callBackSet.has(type)) return exitWithAlert("Invalid query");
   let messages = await Reply.findAndCountAll({
@@ -577,12 +545,25 @@ bot.on('callback_query', async (query) => {
   let replyObj = messages.rows[0];
   if (type != replyObj.type) return exitWithAlert(`Mismatching types`);
   let status, text;
+  let callbackHandler = null;
   switch (type) {
     case (MESSAGES.CANCEL):
-      [status, text] = await cancelCallback(replyObj, ...callback_params.slice(1));
+      callbackHandler = cancelCallback;
+      break;
+    case (MESSAGES.WATCH):
+      callbackHandler = watchCallback;
+      break;
+    case (MESSAGES.SEARCH):
+      callbackHandler = searchCallback;
+      break;
+    case (MESSAGES.EVENT):
+      callbackHandler = eventCallback;
       break;
     default:
       bot.answerCallbackQuery(query.id, { text: "Non implementato", });
+  }
+  if (callbackHandler) {
+    [status, text] = await callbackHandler(replyObj, ...callback_params.slice(1));
   }
   if (!status) return exitWithAlert(text);
   if (text) bot.answerCallbackQuery(query.id, { text: text });

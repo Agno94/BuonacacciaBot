@@ -203,8 +203,10 @@ function search(msg, chatId, categoryID, regioneID) {
           })
         );
         for (const ref of msgRefs) {
-          let response = await reply.response(ref);
-          if (response.error) console.log("Error sending Search Results", response);
+          let [response, ok] = await reply.save(MESSAGES.EVENT, ref).then(
+            (r) => [r, true], (e) => [e, false]
+          );
+          if (!ok) console.log("Error sending Search Results", response);
         }
       }
       reply.message(MESSAGES.SEARCH, { id: chatId }, reply_data);
@@ -307,16 +309,12 @@ function selectRegione(msg, regione_cmd) {
     })
     return;
   }
-  // let command = status.regioneUsedFor;
-  // let args = status.regioneUsedWith;
   delete status.askedForRegione;
   delete status.regioneUsedFor;
   delete status.regioneUsedWith;
   if (command == "search") {
-    // console.log("running", "search", msg, msg.chat.id, args[0], regione);
     search(msg, msg.chat.id, args[0], regione);
   } else if (command == "watch") {
-    // console.log("running", "watch", msg, msg.chat.id, args[0], regione);
     watch(msg, msg.chat.id, args[0], regione)
   } else {
     console.error("Unhandled command", command);
@@ -325,7 +323,7 @@ function selectRegione(msg, regione_cmd) {
 
 
 bot.onText(/\/cerca[ _]*$/, Session.runWith((msg, match) => {
-  console.log("onText \/cerca")
+  console.log("onText \/cerca");
   const chatId = msg.chat.id;
   reply.message(MESSAGES.SEARCH, msg.chat, { step: SELECTION.CATEGORY, });
 }));
@@ -414,7 +412,12 @@ bot.onText(/\/mostra[ _]*([0-9]*)/, Session.runWith(async (msg, match) => {
       let msg_refs = send_list.map(
         (item) => reply.message(MESSAGES.EVENT, msg.chat, { event: item })
       );
-      for (const ref of msg_refs) await reply.response(ref);
+      for (const ref of msg_refs) {
+        let [response, ok] = await reply.save(MESSAGES.EVENT, ref).then(
+          (r) => [r, true], (e) => [e, false]
+        );
+        if (!ok) console.log("Error sending Search Results", response);
+      }
     } catch (e) {
       sendError(msg);
       console.log("Error showing results:", e);
@@ -483,12 +486,20 @@ async function cancelHandler(msg, match) {
   } catch (e) {
     console.log("Error on \/anulla, old part", e);
   }
-  cancelFindList(msg.chat.id).then(data => {
-    reply.message(MESSAGES.CANCEL, msg.chat, data);
+  cancelFindList(msg.chat.id).then(async (data) => {
+    let ref = reply.message(MESSAGES.CANCEL, msg.chat, data);
+    let replyMsg = await reply.response(ref);
+    if (replyMsg.ok) {
+      Reply.create({
+        type: sequelize.CANCEL_REPLY,
+        chatID: msg.chat.id,
+        msgID: replyMsg.message_id,
+      });
+    } else throw Error(result);
   }, (e) => {
     console.error("Error on \/annulla", e);
     sendError();
-  });
+  })
 }
 
 async function cancelCallback(replyObj, action = "", target = "") {

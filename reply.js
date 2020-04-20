@@ -43,6 +43,7 @@ class Replier {
 
     createMessage(type, chat, data) {
         let msg = {
+            type: type,
             text: '',
             option: {},
             chat: chat,
@@ -55,7 +56,6 @@ class Replier {
         let keyboard = false;
         switch (type) {
             case (MESSAGES.EVENT):
-                // console.log(data);
                 params.event = data.event;
                 keyboard = [[
                     {
@@ -91,6 +91,10 @@ class Replier {
                         text: 'Rimanda osservatori attivi',
                     });
                 };
+                break;
+            case (MESSAGES.SEARCH):
+                params = data;
+                // if
                 break;
             default:
                 params = data;
@@ -153,6 +157,7 @@ class Replier {
                 if (this._isSendable(message.chat.id)) {
                     this._deliverMessage(message).then(
                         (r) => r
+                        // this._doSaveReply(message.type, message.ref)
                         // on success
                     ).catch(
                         (e) => Object({ ok: false, error: e })
@@ -213,9 +218,8 @@ class Replier {
 
     async _deliverMessage(message, action = 'send') {
         let tries = MAX_ATTEMPTS;
-        let success = false;
-        let result;
-        while (tries && !success) {
+        let result = { ok: false };
+        while (tries && !(result.ok)) {
             try {
                 if (action == 'send') {
                     result = await this.bot.sendMessage(
@@ -227,23 +231,25 @@ class Replier {
                         message.text,
                         message.option);
                 }
-                success = true;
+                result.ok = true;
             } catch (e) {
                 console.error("Sender", e.name, e.message);
+                result.ok = false;
                 tries--;
                 if (!tries) {
-                    return { ok: false, error: e.message };
+                    result.error = e.message;
+                    return result;
                 }
                 if ((e.code == "ETELEGRAM")) {
-                    let body = e.response.body;
-                    console.error("ETELEGRAM", body);
-                    if (body.error_code == 429) {
+                    result = e.response.body;
+                    console.error("ETELEGRAM", result);
+                    if (result.error_code == 429) {
                         let chatID = message.chat.id;
                         this.chatQueued[chatID] = (this.chatQueued[chatID] || 0) + 1;
-                        await wait(body.parameters.retry_after * 999);
+                        await wait(result.parameters.retry_after * 999);
                         this.chatQueued[chatID] -= 1;
                     }
-                    if (body.error_code == 400) return { ok: false, error_code: 400 };
+                    if (result.error_code == 400) return result;
                 }
             }
         }
@@ -252,6 +258,7 @@ class Replier {
 
     _onFinish(chatID, ref = 0) {
         return (function (r) {
+            console.log("onfinish", r.message_id);
             if (ref) this.responses[ref] = r;
             delete this.sendActionTime[chatID];
             if (r.chat && (r.chat.type == "private")) this.privateSet.add(r.chat.id);
@@ -262,6 +269,24 @@ class Replier {
                 this.chatCounter[chatID] -= 1;
             }, 7000);
         }).bind(this)
+    }
+
+    async save(type, ref, status = {}) {
+        let response = await this.response(ref);
+        if (response && response.chat && response.message_id) {
+            let [obj, ok] = await this.Reply.create({
+                type: type,
+                msgID: response.message_id,
+                chatID: response.chat.id,
+                status: status
+            }).then(
+                obj => [obj, true]
+            ).catch((e) => [e, false])
+            if (!ok) throw obj;
+            return obj;
+        } else {
+            throw response;
+        }
     }
 
 }

@@ -27,16 +27,15 @@ TEMPLATES[MESSAGES.EVENT] = (p) => `
 💰️ Costo: ${p.event.cost / 100} €
 <a href="https://buonacaccia.net/event.aspx?e=${p.event.bcId}">🔗 <b>Link</b> dettagli ed iscrizione</a>
  Promemoria relativi a questo eventi: 🔕 <i>Disattivi</i>`
-// 🔔
 
 function SearchResult(p) {
     if (p.step < SELECTION.ZONE) return '';
     if (p.step < SELECTION.COMPLETE) {
-        if (p.list && p.list.length) 
+        if (p.list && p.list.length)
             return p.list.reduce((msg, info) => {
-            return msg + `
+                return msg + `
 - la regione <i>${REGIONI[info.regione].human}</i> ha <b>${info.count}</b> eventi`
-        }, "\n\nDel tipo selezionato, in database:");
+            }, "\n\nDel tipo selezionato, in database:");
         else return "\n\nNessun evento di questo tipo nel database";
     }
     if (!p.count) return `
@@ -52,7 +51,7 @@ SELECTION_STATUS = {};
 SELECTION_STATUS[SELECTION.BRANCA] = (p) => `
 ▪️ <i>Scelta branca</i>`;
 SELECTION_STATUS[SELECTION.CATEGORY] = (p) => `
-${p.emoji || '▪️' } <i>Scelta categoria</i>`;
+${p.emoji || '▪️'} <i>Scelta categoria</i>`;
 SELECTION_STATUS[SELECTION.ZONE] = (p) => `
 ${CATEGORIES.EMOJI(p.cat)} <b>${CATEGORIES[p.cat].human}</b> ▪️ <i>Scelta zona</i>`;
 SELECTION_STATUS[SELECTION.REGIONE] = (p) => `
@@ -89,20 +88,24 @@ TEMPLATES[MESSAGES.WATCH] = (p) => {
 
     Con questa funzione per farmi controllare degli eventi presenti su ${BClink}. Mi ricorderò che ti interessano di eventi del tipo selezionato e ti invierò in messaggio quando trovo nuovi eventi sul sito. Se invece ti interessa sapere gli eventi presenti ora usa <u>\/cerca</u>.
 ${SELECTION_HELP[p.step]}`
-    if (p.step == SELECTION.COMPLETE) msg += `
+    if (p.step == SELECTION.COMPLETE) {
+        if (p.status == 'active') msg += `
 ✔️🔔 Osservatore creato ed attivo.
 
 Quando non vuoi più ricevere avvisi usa il testo sotto o scrivimi <u>/annulla</u>`
-    // if (p.step == SELECTION.EXPIRED) msg += `
-    // `
+        if (p.status == 'cancelled') msg += `
+❌🔕 Osservatore eliminato e disattivo`
+        if (p.status == 'expired') msg += `
+⌛️🔕 Osservatore disattivo in quanto scaduto`
+    }
     return msg
 }
 
 TEMPLATES[MESSAGES.CANCEL] = (p) => {
     function createList(list) {
         if (!list.length) return "nessun elemento presente"
-        return list.reduce( (msg, element) => msg + `
-🔸 ${element}`,"")
+        return list.reduce((msg, element) => msg + `
+🔸 ${element}`, "")
     }
     return `
 🗑 Rimozione di promemoria ed osservatori

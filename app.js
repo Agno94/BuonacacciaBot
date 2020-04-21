@@ -339,8 +339,28 @@ async function watchCallback(replyObj, action = "", ...params) {
       await watcher.save()
     }
     reply.update(replyObj, reply_data);
-    if (!watcher) return [true, 'Scegli l\'opzione'];
+    if (!watcher) return [true, 'Scegli e clicca'];
     return [true, 'Creato']
+  }
+  if (action == "new") {
+    let ref = reply.message(MESSAGES.WATCH, { id: replyObj.chatID }, { step: SELECTION.BRANCA });
+    await reply.save(MESSAGES.WATCH, ref, { status: 'select' });
+    return [true, ''];
+  }
+  if (action == 'cancel') {
+    if (replyObj.data.status != 'active') return [false, "Non c'è niente di attivo"];
+    let watcher = await Watcher.findByPk(replyObj.data.id).catch((e) => false);
+    if (!watcher) return [false, "Nessun osservatore attivo associato"];
+    let reply_data = {
+      step: SELECTION.COMPLETE,
+      cat: watcher.category,
+      reg: watcher.regione,
+      status: "cancelled",
+    }
+    await watcher.destroy().catch(e => e).then(r => console.log(r));
+    replyObj.update({ data: { status: 'cancelled' } });
+    reply.update(replyObj, reply_data);
+    return [false, "Non implementato"];
   }
 }
 
@@ -376,7 +396,7 @@ bot.onText(/\/osserva[ _]+([a-zA-Z0-9]+)[ _]*(.*)/, Session.runWith(async (msg, 
     response = await reply.response(ref);
     watcher.msgId = response.message_id;
     extra_data = { data: { status: 'active', id: watcher.id } };
-    reply.save(MESSAGES.WATCH, ref, extra_data);    
+    reply.save(MESSAGES.WATCH, ref, extra_data);
     await watcher.save()
   }
 }));
@@ -397,7 +417,7 @@ bot.onText(/\/mostra[ _]*([0-9]*)/, oldWarning);
 // EVENT AND ALARM
 
 async function eventCallback(replyObj, action = "", ...params) {
-  return [false, "Non implementato"];
+  return [false, "Funzione non ancora disponibile"];
 }
 
 // CANCEL ACTIVE WATCHER OR ALARM

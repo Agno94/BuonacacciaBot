@@ -106,6 +106,15 @@ class Replier {
                         url: `https://buonacaccia.net/event.aspx?e=${data.event.bcId}`,
                         text: '🔗 Dettagli ed Iscrizione su Buonacaccia.net'
                     }
+                ], [
+                    {
+                        text: "⏰ 🔔 ⏯ Attiva promemoria",
+                        callback_data: `${MESSAGES.EVENT}/alarm/${data.event.bcId}`
+                    },
+                    // {
+                    //     text: "🔄",
+                    //     callback_data: `${MESSAGES.EVENT}/update/${data.event.bcId}`
+                    // }
                 ]];
                 break;
             case (MESSAGES.CANCEL):
@@ -155,7 +164,7 @@ class Replier {
                         }, {
                             text: '🚀️ Ricomincia',
                             callback_data: `${MESSAGES.SEARCH}/restart/`,
-                        }]) 
+                        }])
                     }
                 }
                 break;
@@ -164,7 +173,16 @@ class Replier {
                 if (data.step < SELECTION.COMPLETE) {
                     keyboard = selectionKeyboard(MESSAGES.WATCH, data.step, data);
                 } else {
-                    keyboard = [];
+                    keyboard = [[{
+                        text: '🚀 Nuovo osservatore',
+                        callback_data: `${MESSAGES.WATCH}/new/`
+                    }]];
+                    if (data.status == 'active') {
+                        keyboard[0].unshift({
+                            text: '🗑 Elimina Osservatore',
+                            callback_data: `${MESSAGES.WATCH}/cancel/`,
+                        });
+                    }
                 }
             default:
                 params = data;

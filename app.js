@@ -117,6 +117,7 @@ let startJobBot = bot.getMe().then((r) => {
 
 async function watchEvent() {
   console.log("Looking for unwatched events");
+  let foundNotificationMessages = {};
   let list = await BCEvent.count({
     where: {
       hasBeenWatched: false,
@@ -140,14 +141,26 @@ async function watchEvent() {
         category: params.category,
         regione: params.regione,
       },
+      raw: true,
     });
     events = await eventsQuery;
     watchers = await watchersQuery;
+    let notificationRefs = watchers.map(
+      (w) => w.chatId
+    ).filter(
+      (id) => (!foundNotificationMessages[id])
+    ).map(
+      (chatID) => reply.message(MESSAGES.ONFOUND, {id: chatID}, {})
+    );
+    for (const ref of notificationRefs) {
+      let r = await reply.response(ref);
+      if (r.chat) foundNotificationMessages[r.chat.id] = r.message_id;
+    }
     for (const event of events) {
       let refs = watchers.map(
         (w) => reply.message(MESSAGES.EVENT, { id: w.chatId }, {
           event: event.dataValues,
-          reply_to: w.msgId,
+          reply_to: foundNotificationMessages[w.chatId],
         })
       )
       await wait(100);

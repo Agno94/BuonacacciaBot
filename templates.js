@@ -119,4 +119,10 @@ Elenco degli osservatori attivi: ${createList(p.watchers)}
 Elenco degli eventi con promemoria attivo: ${createList(p.alarmEvents)}`
 }
 
+TEMPLATES[MESSAGES.ONFOUND] = (p) => `
+👀📩 Notifiche di eventi in arrivo
+Ho trovato degli eventi ti interessano.
+Per vedere gli osservatori attivi ed eventualmente rimuoverli per non avere altre notifiche scrivimi <u>/annulla</u>.
+`
+
 module.exports = { TEMPLATES }

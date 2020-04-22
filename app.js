@@ -150,7 +150,7 @@ async function watchEvent() {
     ).filter(
       (id) => (!foundNotificationMessages[id])
     ).map(
-      (chatID) => reply.message(MESSAGES.ONFOUND, {id: chatID}, {})
+      (chatID) => reply.message(MESSAGES.ONFOUND, { id: chatID }, {})
     );
     for (const ref of notificationRefs) {
       let r = await reply.response(ref);
@@ -173,6 +173,25 @@ async function watchEvent() {
     }
   }
 }
+
+// START, ABOUT, AND STATUS COMMAND
+
+bot.onText(/\/start/, (msg, match) => {
+  console.log("\/started by", msg.chat.id);
+  reply.message(MESSAGES.WELCOME, msg.chat, {});
+});
+
+bot.onText(/\/about/, (msg, match) => {
+  console.log("\/about to", msg.chat.id);
+  reply.message(MESSAGES.ABOUT, msg.chat, {});
+});
+
+bot.onText(/\/status/, (msg, match) => {
+  console.log("\/about to", msg.chat.id);
+  Scraper.get_last_collection(true, true, true).then((collections) => {
+    reply.message(MESSAGES.STATUS, msg.chat, collections);
+  })
+});
 
 // SEARCH AND WATCH FUNCTIONS
 

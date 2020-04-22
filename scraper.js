@@ -406,7 +406,7 @@ class EventScraper {
         };
         if (unempty) {
             response.unempty = await this.BCLog.findAll({
-                where: { special: false, events: { [Op.gt]: 0 } },
+                where: { special: false, events: { [this.Op.gt]: 0 } },
                 attributes: ['date', 'status'],
                 order: [['date', 'DESC']],
                 limit: 1

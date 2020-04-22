@@ -99,6 +99,15 @@ class Replier {
         }
         let keyboard = false;
         switch (type) {
+            case (MESSAGES.ABOUT):
+                keyboard = [[{
+                    url: `https://buonacaccia.net/`,
+                    text: '🔗 Buonacaccia'
+                },{
+                    url: `https://buonacaccia.net/`,
+                    text: "📦 Repository su github",
+                }]];
+                break;
             case (MESSAGES.EVENT):
                 params.event = data.event;
                 keyboard = [[

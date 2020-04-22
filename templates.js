@@ -9,11 +9,41 @@ TEMPLATES.BetaAlert = `
 <b>⚠️ Attenzione</b>: questo bot è in <i>fase di sviluppo e collaudo</i> 🚧`;
 
 TEMPLATES[MESSAGES.WELCOME] = (p) => `
+Ciao,
 Il mio obiettivo è aiutare capi e ragazzi scout ad avere a che fare con ${BClink}
-In futuro potrò: aiutarti a cercare eventi, avvisarti quando compaiono nuovi eventi che ti interessano, avvisarti quando stanno per aprire le iscrizioni ad un campetto, ecc...
-Attualmente sono disponibili queste funzioni:
-🔸<u>/cerca</u> - Posso cercare eventi tra quelli presenti su buonacaccia l'ultima volta che ho visitato il sito
-🔸<u>/osserva</u> - Posso avvisarti quando compare su buonacaccia un evento che ti interessa`
+Non sono ancora completo. Prova a usare una di queste due funzioni già disponibili:
+🔸 <u>/cerca</u> - Posso cercare eventi tra quelli presenti su buonacaccia l'ultima volta che ho visitato il sito
+🔸 <u>/osserva</u> - Posso avvisarti quando compare su buonacaccia un evento che ti interessa
+I promemoria per le iscrizione agli eventi non sono ancora disponibili.
+Scrivi <u>/about</u> per sapere di più su di me.`
+
+TEMPLATES[MESSAGES.ABOUT] = (p) => `
+Il mio obiettivo è aiutare capi e ragazzi ⚜️🇮🇹 AGESCI ad avere a che fare con <b>${BClink}</b>
+Posso: aiutarti a cercare eventi; avvisarti quando compaiono nuovi eventi che ti interessano; avvisarti quando
+stanno per aprire le iscrizioni ad un campetto; ecc...
+
+⚠️ Attenzione. Bot in fase di sviluppo e collaudo 🚧 Per contribuire a migliorarlo riportate problemi riscontati e
+suggerimenti tramite <a href="https://github.com/Agno94/BuonacacciaBot/issues">questo link</a>.
+
+Sono sviluppato da un capo veneto e non sono legato a chi cura BuonaCaccia.
+Funziono in questo modo: più volte al giorno visito Buonacaccia, analizzo la lista di eventi, salvo i nuovi elementi nella mia memoria.
+
+Funzioni attualmente <b>NON</b> disponibili ma che potrei avere in futuro:
+🔸 Promemoria di apertura delle iscrizioni ad un evento
+
+Funzioni e comandi ora disponibili:
+🔸 <u>/cerca</u> - 🔎 Per cercare eventi tra quelli presenti su buonacaccia l'ultima volta che ho visitato il sito;
+🔸 <u>/osserva</u> - 👀 Per farti avvisarti quando compare su buonacaccia un evento che ti interessa;
+🔸 <u>/annula</u> - 🗑 Per elencare e scegliere se annullare le notifiche attive;
+🔸 <u>/status</u> - 📋 Per conoscere l'ultima volta che ho visitato buonacaccia;
+`
+
+TEMPLATES[MESSAGES.STATUS] = (p) => `
+📋 Stato della raccolta di informazione da Buonacaccia
+
+L'ultima raccolta di informazione è terminata in data ${p.last.date.toLocaleDateString()} ore ${p.last.date.toLocaleTimeString()} con risultato: «${p.last.status}»
+L'ultima raccolta di informazione che si è conclusa con successo è terminata in data ${p.successful.date.toLocaleDateString()} ore ${p.last.date.toLocaleTimeString()}
+L'ultima raccolta di informazione in cui è stato trovato almeno 1 nuovo evento è terminata in data ${p.unempty.date.toLocaleDateString()} ore ${p.unempty.date.toLocaleTimeString()}`
 
 TEMPLATES[MESSAGES.EVENT] = (p) => `
 <i>Evento</i>: <b>${p.event.title}</b>

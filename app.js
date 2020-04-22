@@ -395,7 +395,7 @@ bot.onText(/\/osserva[ _]+([a-zA-Z0-9]+)[ _]*(.*)/, Session.runWith(async (msg, 
   if (watcher) {
     response = await reply.response(ref);
     watcher.msgId = response.message_id;
-    extra_data = { data: { status: 'active', id: watcher.id } };
+    extra_data = { status: 'active', id: watcher.id };
     reply.save(MESSAGES.WATCH, ref, extra_data);
     await watcher.save()
   }

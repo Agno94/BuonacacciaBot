@@ -20,7 +20,6 @@ Still in progress.
 
 - No notification before subscription start date and event start date are available.
 - The notification on new events are to be tested properly.
-- Ideally I also would like to change to the inline keyboard – callback function system.
 
 ### Setup
 

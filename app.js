@@ -16,7 +16,7 @@ const APP_URL = process.env.APP_URL || "";
 const MAX_FIND_RESULTS = process.env.MAX_FIND_RESULTS || 8;
 const IS_PRODUCTION = (process.env.NODE_ENV === 'production');
 const SCRAP_FORCE_TIME =
-  process.env.SCRAP_FORCE_TIME || (IS_PRODUCTION && 12 * 3600) || 10;
+  process.env.SCRAP_FORCE_TIME || (IS_PRODUCTION && 6 * 3600) || 30;
 
 const { REGIONI, ZONES, CATEGORIES, BRANCHE, COLLECTIONS } = require("./data.js");
 const { TEMPLATES } = require("./templates.js")
@@ -102,6 +102,7 @@ let startJobBot = bot.getMe().then((r) => {
   bot.on("message", (msg) => {
     if (msg.text) {
       msg.text = msg.text.replace(BOT_USERNAME_REGEXP, "");
+      console.log(`Received ${msg.text} by ${(msg.chat && msg.chat.id) || '?'}`);
     }
     msg.chat.name = msg.chat.title || msg.chat.firstname;
   });
@@ -407,9 +408,10 @@ bot.onText(/\/cerca[ _]+([a-zA-Z0-9]*)[ _]*(.*)/, Session.runWith((msg, match) =
   let c = match[1].toLowerCase();
   let r = match[2].trim().replace(/[_ 'x]/g, "").toLowerCase();
   let selectionObj = parseSelection('', c, '', r);
-  let [reply_data, status] = searchProcess(selectionObj);
-  let ref = reply.message(MESSAGES.SEARCH, msg.chat, reply_data);
-  reply.save(MESSAGES.WATCH, ref, status);
+  searchProcess(selectionObj).then(([reply_data, status]) => {
+    let ref = reply.message(MESSAGES.SEARCH, msg.chat, reply_data);
+    reply.save(MESSAGES.SEARCH, ref, status);
+  }).catch(catchAndLogError);
 }));
 
 bot.onText(/\/osserva[ _]*$/, Session.runWith((msg, match) => {
@@ -421,20 +423,21 @@ bot.onText(/\/osserva[ _]+([a-zA-Z0-9]+)[ _]*(.*)/, Session.runWith(async (msg, 
   let c = match[1].toLowerCase();
   let r = match[2].trim().replace(/[_ 'x]/g, "").toLowerCase();
   let selectionObj = parseSelection('', c, '', r);
-  let extra_data = { status: 'select' };
-  let [reply_data, watcher] = await watcherProcess(selectionObj, msg.chat.id);
-  let ref = reply.message(MESSAGES.WATCH, msg.chat, reply_data);
-  if (watcher) {
-    response = await reply.response(ref);
-    watcher.msgId = response.message_id;
-    extra_data = { status: 'active', id: watcher.id };
+  watcherProcess(selectionObj, msg.chat.id).then(async ([reply_data, watcher]) => {
+    let extra_data = { status: 'select' };
+    let ref = reply.message(MESSAGES.WATCH, msg.chat, reply_data);
+    if (watcher) {
+      response = await reply.response(ref);
+      watcher.msgId = response.message_id;
+      extra_data = { status: 'active', id: watcher.id };
+      await watcher.save();
+    }
     reply.save(MESSAGES.WATCH, ref, extra_data);
-    await watcher.save()
-  }
+  }).catch(catchAndLogError);
 }));
 
 function oldWarning(msg, match) {
-  bot.sendmessage(msg.chat.id, "❌️ SONO CAMBIATO: usa /cerca o /osserva");
+  bot.sendMessage(msg.chat.id, "❌️ SONO CAMBIATO: usa /cerca o /osserva");
 }
 
 bot.onText(/\/nazionale[ _]*/, oldWarning);
@@ -647,7 +650,7 @@ function signalHandler(SIGNAL) {
     console.log("Quit!");
     process.exit();
   });
-  wait(20000).then(() => {
+  wait(25000).then(() => {
     process.exit(10);
   })
   return 1;
@@ -657,6 +660,8 @@ process.on("SIGINT", signalHandler);
 process.on("SIGTERM", signalHandler);
 
 // CRON SETUP
+
+
 
 if (process.env.APP_SCHEDULE_COLLECTION) {
   cron.schedule('0 10 * * * *', async () => {

@@ -41,9 +41,9 @@ Funzioni e comandi ora disponibili:
 TEMPLATES[MESSAGES.STATUS] = (p) => `
 📋 Stato della raccolta di informazione da Buonacaccia
 
-L'ultima raccolta di informazione è terminata in data ${p.last.date.toLocaleDateString('it-IT')} ore ${p.last.date.toLocaleTimeString('it-IT')} con risultato: «${p.last.status}»
-L'ultima raccolta di informazione che si è conclusa con successo è terminata in data ${p.successful.date.toLocaleDateString('it-IT')} ore ${p.last.date.toLocaleTimeString('it-IT')}
-L'ultima raccolta di informazione in cui è stato trovato almeno 1 nuovo evento è terminata in data ${p.unempty.date.toLocaleDateString('it-IT')} ore ${p.unempty.date.toLocaleTimeString('it-IT')}`
+L'ultima raccolta di informazione è terminata in data ${p.last.time} ore ${p.last.date} con risultato: «${p.last.status}»
+L'ultima raccolta di informazione che si è conclusa con successo è terminata in data ${p.successful.date} ore ${p.last.time}
+L'ultima raccolta di informazione in cui è stato trovato almeno 1 nuovo evento è terminata in data ${p.unempty.date} ore ${p.unempty.time}`
 
 TEMPLATES[MESSAGES.EVENT] = (p) => `
 <i>Evento</i>: <b>${p.event.title}</b>

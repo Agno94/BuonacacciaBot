@@ -17,12 +17,6 @@ const { MESSAGES, SELECTION } = require("./message.js");
 const { TEMPLATES } = require("./templates.js");
 const { REGIONI, ZONES, CATEGORIES, BRANCHE, COLLECTIONS } = require("./data.js");
 
-function logSet(set) {
-    let r = "{";
-    set.forEach((e) => { r += `${e}, `; });
-    return r + '}';
-};
-
 wait = (ms) => new Promise(r => setTimeout(r, ms));
 
 function selectionKeyboard(type, step, data) {
@@ -70,13 +64,13 @@ function selectionKeyboard(type, step, data) {
 
 class Replier {
 
-    constructor(bot, Reply) {
+    constructor(bot, db, Session) {
         this.bot = bot;
-        this.Reply = Reply;
+        this.Reply = db.Reply;
+        this.Session = Session;
         this.globalCounter = 0;
         this.chatCounter = {};
         this.chatQueued = {};
-        this.privateSet = new Set();
         this.isSending = false;
         this.sendActionTime = {};
         this.queue = {
@@ -118,16 +112,16 @@ class Replier {
                 params.event = data.event;
                 keyboard = [[
                     {
-                        url: `https://buonacaccia.net/event.aspx?e=${data.event.bcId}`,
+                        url: `https://buonacaccia.net/event.aspx?e=${data.event.bc}`,
                         text: '🔗 Dettagli ed Iscrizione su Buonacaccia.net'
                     }
                 ], [
                     {
                         text: "⏰ 🔔 ⏯ Attiva promemoria",
-                        callback_data: `${MESSAGES.EVENT}/alarm/${data.event.bcId}`
+                        callback_data: `${MESSAGES.EVENT}/alarm/${data.event.bc}`
                     },
                 ]];
-                break; this.chatQueued[replyObj.chatID] = (this.chatQueued[replyObj.chatID] || 0) + 1;
+                break;
 
             case (MESSAGES.CANCEL):
                 params = data;
@@ -233,7 +227,6 @@ class Replier {
         let priority = MESSAGES.prioritySet.has(type);
         this.ref += 1;
         message.ref = this.ref;
-        if (chat.type == "private") this.privateSet.add(chat.id.toString());
         if (priority) this.queue.top.push(message)
         else this.queue.normal.push(message);
         this.chatQueued[chat.id] = (this.chatQueued[chat.id] || 0) + 1;
@@ -309,7 +302,7 @@ class Replier {
     }
 
     _isSendable(chatID) {
-        let chatLimit = this.privateSet.has(chatID.toString()) ?
+        let chatLimit = this.Session.isPrivate(chatID) ?
             MAX_CHAT_MSG : MAX_NONPRIVATE_MSG;
         if (!this.chatCounter[chatID]) this.chatCounter[chatID] = 0;
         if ((this.globalCounter) > MAX_SECOND_MSG) return false;
@@ -363,8 +356,7 @@ class Replier {
         return (function (r) {
             if (ref) this.responses[ref] = r;
             delete this.sendActionTime[chatID];
-            if (r.chat && (r.chat.type == "private"))
-                this.privateSet.add(r.chat.id.toString());
+            if (r.chat) this.Session.updateInfo(r.chat);
             setTimeout(() => {
                 this.globalCounter -= 1;
             }, 1000);

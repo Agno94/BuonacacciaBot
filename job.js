@@ -16,12 +16,11 @@ const APP_URL = process.env.APP_URL || "";
 // DATABASE
 
 const Sequelize = require('sequelize');
-
 const sequelize = new Sequelize(DATABASE_URL, { define: { timestamps: false } });
-const { BCEvent, BCLog, Watcher, EventReply, ChatSession } = sequelize.import("./db.js");
+const db = sequelize.import("./db.js");
 
 const EventScraper = require('./scraper.js');
-Scraper = new EventScraper(BCEvent, BCLog, Sequelize);
+Scraper = new EventScraper(db);
 
 // SIGNAL HANDLER
 

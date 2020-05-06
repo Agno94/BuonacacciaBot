@@ -25,38 +25,35 @@ const BC_TEST_URL = "https://buonacaccia.net/Subscribe.aspx";
 
 class EventScraper {
 
-    constructor(BCEvent, BCLog, Sequelize, profile = true) {
-        this.Op = Sequelize.Op;
-        this.BCEvent = BCEvent;
-        this.BCLog = BCLog;
+    constructor(db, profile = true) {
+        this.db = db;
         this.activeEvents = new Set();
-        this.is_paused = false;
-        this.is_collection_running = false;
-        this.is_collection_scheduled = false;
-        this.is_ready = false;
+        this.isPaused = false;
+        this.isCollectionRunning = false;
+        this.isCollectionScheduled = false;
+        this.isReady = false;
         this.profile = profile;
-        // this.collection = {};
         this.today = new Date(new Date().toDateString());
     }
 
     pause(s) {
-        this.is_paused = ((s == undefined) && (!this.is_paused)) || s
+        this.isPaused = ((s == undefined) && (!this.isPaused)) || s
     }
 
     initialize() {
-        return this.BCEvent.findAll({
+        return this.db.BCEvent.findAll({
             where: {
-                startdate: { [this.Op.gte]: this.today }
+                startdate: { [this.db.Op.gte]: this.today }
             },
-            attributes: ['bcId']
+            attributes: ['bc']
         }).then(
-            (r) => r.map((x) => x.bcId)
+            (r) => r.map((x) => x.bc)
         ).then((r) => {
             r.forEach(
                 (item) => {
                     this.activeEvents.add(item);
                 })
-            this.is_ready = true;
+            this.isReady = true;
         }).catch(e => {
             console.log("Inizialing known active event set failed");
             console.log(e);
@@ -64,7 +61,7 @@ class EventScraper {
     }
 
     log(...args) {
-        if (this.is_collection_running) {
+        if (this.isCollectionRunning) {
             console.log(" *", ...args);
         } else {
             console.log(...args);
@@ -72,14 +69,14 @@ class EventScraper {
     }
 
     async finish() {
-        while (this.is_collection_running) {
+        while (this.isCollectionRunning) {
             this.log("Waiting for a running collection to be finished")
             await wait(1000);
         }
     }
 
-    async _wait_and_set_params(cat, reg) {
-        while (!this.is_ready) {
+    async _waitAndSetParams(cat, reg) {
+        while (!this.isReady) {
             this.log("Waiting to be ready")
             await wait(500);
         }
@@ -87,8 +84,8 @@ class EventScraper {
         this.category = (CATEGORIES.SET.has(cat) && cat) || '';
         this.regione = (REGIONI.SET.has(reg) && reg) || '';
         this.log(`Starting collection of data from buonacaccia.net with cat:${this.category} and reg:${this.regione}`);
-        this.is_collection_running = true;
-        this.is_collection_scheduled = false;
+        this.isCollectionRunning = true;
+        this.isCollectionScheduled = false;
         return 0;
     }
 
@@ -118,7 +115,7 @@ class EventScraper {
             if (this.is_event_id_relevant(event_id)) {
                 let item = $(link).parent().parent()
                 let entry = {
-                    bcId: event_id,
+                    bc: event_id,
                     regione: this.regione,
                     category: this.category
                 };
@@ -174,7 +171,7 @@ class EventScraper {
         return entry_list
     }
 
-    _event_page_parser(entry, htmldata) {
+    _eventPageParser(entry, htmldata) {
         let match;
         match = REGEXP_SubsStart.exec(htmldata);
         entry.subscriptiondate = new Date(`${match[3]}-${match[2]}-${match[1]}`);
@@ -183,14 +180,14 @@ class EventScraper {
         return entry
     }
 
-    async _do_request_and_retry(request, tries, timeout, msg) {
+    async _doRequestAndRetry(request, tries, timeout, msg) {
         const accepted_errors = new Set(["ECONNABORTED", "ETIMEDOUT"]);
         let still_to_try = tries || 1;
         request.timeout = timeout || 0;
         let token = { exec: null, done: false };
         while (still_to_try) {
             still_to_try--;
-            if (this.is_paused) return [false, ""];
+            if (this.isPaused) return [false, ""];
             token.cancelled = false;
             request.cancelToken = new axios.CancelToken(c => { token.exec = c });
             if (timeout) {
@@ -221,25 +218,25 @@ class EventScraper {
         throw "FAILED_EVERY_TIMES";
     }
 
-    async _complete_event_detail(entry, index, list) {
+    async _completeEventDetail(entry, index, list) {
         let request = {
             method: "get",
             url: BC_EVENTDETAIL_URL,
-            params: { e: entry.bcId },
+            params: { e: entry.bc },
             headers: { 'Connection': 'keep-alive' },
             httpsAgent:
                 new https.Agent({ keepAlive: true })
         };
         await wait(3 * index);
-        if (this.is_paused) {
+        if (this.isPaused) {
             list[index] = false;
             return;
         }
         // TRIES TO GET THE PAGE UP TO tries TIMES
-        await this._do_request_and_retry(request, 4, 4000, `Event Detail #${index}:`).then(
+        await this._doRequestAndRetry(request, 4, 4000, `Event Detail #${index}:`).then(
             ([err, data]) => {
                 //entry.collectiondate = this.start_time;
-                list[index] = this._event_page_parser(entry, data);
+                list[index] = this._eventPageParser(entry, data);
                 return data;
             }, (e) => {
                 this.log(index, "Detail fetch failed");
@@ -250,8 +247,8 @@ class EventScraper {
             })
     }
 
-    async _bc_test() {
-        await this._do_request_and_retry({
+    async _bcTest() {
+        await this._doRequestAndRetry({
             method: "get",
             url: BC_TEST_URL,
         }, 3, 5000, "Test page").then(([err, data]) => {
@@ -267,9 +264,9 @@ class EventScraper {
         });
     }
 
-    async _bc_event_grid() {
+    async _bcEventGrid() {
         // GET EVENT GRID PAGE
-        let [err, data] = await this._do_request_and_retry({
+        let [err, data] = await this._doRequestAndRetry({
             method: "get",
             params: {
                 CID: (CATEGORIES[this.category] && CATEGORIES[this.category].bccode) || "",
@@ -292,14 +289,14 @@ class EventScraper {
         }
     }
 
-    async _bc_event_detail() {
+    async _bcEventDetail() {
         // FOR EACH EVENT GET EVENT'S DETAIL
         let detail_start_time = new Date(); //PROFILER
         let event_list = this.collection.event_list;
         let promises = event_list.map(
             async (entry, index, list) => {
                 entry.collectiondate = this.start_time;
-                return this._complete_event_detail(entry, index, list);
+                return this._completeEventDetail(entry, index, list);
             }
         );
         // WAIT FOR THE OPERATIONS TO BE COMPLETED
@@ -310,7 +307,7 @@ class EventScraper {
             entry => {
                 if (!entry) { return false };
                 entry.collectiondate = this.start_time;
-                return Boolean(entry.bcId)
+                return Boolean(entry.bc)
             }
         );
         this.collection.event_list = event_list;
@@ -319,15 +316,15 @@ class EventScraper {
         this.collection.time.EDtime = new Date() - detail_start_time;
     }
 
-    async _update_database() {
+    async _updateDatabase() {
         // UPDATE DATABASE
         let database_start_time = new Date();
-        let len = await this.BCEvent.bulkCreate(this.collection.event_list).then(
+        let len = await this.db.BCEvent.bulkCreate(this.collection.event_list).then(
             (r) => {
                 this.log("Database updated successfuly");
                 this.collection.time.DBtime = new Date() - database_start_time;
                 r.forEach((x) => {
-                    this.activeEvents.add(x.bcId);
+                    this.activeEvents.add(x.bc);
                 });
                 return r.length
             }, e => {
@@ -339,10 +336,10 @@ class EventScraper {
     }
 
     async collect(cat, reg) {
-        await this._wait_and_set_params(cat, reg);
-        if (this.is_paused) {
+        await this._waitAndSetParams(cat, reg);
+        if (this.isPaused) {
             this.log("Collections are paused, aborting");
-            this.is_collection_running = false;
+            this.isCollectionRunning = false;
             return []
         }
         this.start_time = new Date();
@@ -351,10 +348,10 @@ class EventScraper {
             time: {},
         };
         try {
-            await this._bc_test();
-            await this._bc_event_grid();
-            await this._bc_event_detail();
-            await this._update_database().catch((e) => console.log(e));
+            await this._bcTest();
+            await this._bcEventGrid();
+            await this._bcEventDetail();
+            await this._updateDatabase().catch((e) => console.log(e));
             if (this.collection.number_grid_events > this.collection.number_db_events) {
                 this.collection.exit_status = "INCOMPLETE";
             } else {
@@ -365,8 +362,8 @@ class EventScraper {
             console.error("Error", this.collection.exit_status, e);
         }
         let event_list = this.collection.event_list;
-        if (!this.is_paused || this.collection.number_db_events) {
-            await this.BCLog.create({
+        if (!this.isPaused || this.collection.number_db_events) {
+            await this.db.BCLog.create({
                 status: this.collection.exit_status,
                 special: Boolean(cat || reg),
                 events: this.collection.number_db_events || 0,
@@ -379,17 +376,17 @@ class EventScraper {
         this.collection.time.total = new Date() - this.start_time;
         if (this.profile) this.log("Time in milliseconds: ", this.collection.time);
         delete this.collection;
-        this.is_collection_running = false;
+        this.isCollectionRunning = false;
         return event_list;
     }
 
-    async get_last_collection(last = true, successful = true, unempty = false) {
+    async getLastCollection(last = true, successful = true, unempty = false) {
         let response = {};
         let onSuccess = (r) => (r[0] && { date: r[0].date, status: r[0].status });
         let onError = (e) => console.error("Error", e.message);
         // let query = {};
         if (last) {
-            response.last = await this.BCLog.findAll({
+            response.last = await this.db.BCLog.findAll({
                 where: { special: false },
                 attributes: ['date', 'status'],
                 order: [['date', 'DESC']],
@@ -397,7 +394,7 @@ class EventScraper {
             }).then(onSuccess).catch(onError);
         };
         if (successful) {
-            response.successful = await this.BCLog.findAll({
+            response.successful = await this.db.BCLog.findAll({
                 where: { special: false, status: 'OK' },
                 attributes: ['date', 'status'],
                 order: [['date', 'DESC']],
@@ -405,8 +402,8 @@ class EventScraper {
             }).then(onSuccess).catch(onError);
         };
         if (unempty) {
-            response.unempty = await this.BCLog.findAll({
-                where: { special: false, events: { [this.Op.gt]: 0 } },
+            response.unempty = await this.db.BCLog.findAll({
+                where: { special: false, events: { [this.db.Op.gt]: 0 } },
                 attributes: ['date', 'status'],
                 order: [['date', 'DESC']],
                 limit: 1

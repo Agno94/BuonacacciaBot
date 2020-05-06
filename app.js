@@ -9,11 +9,10 @@ const axios = require('axios');
 
 const PORT = process.env.PORT || 5000;
 const TG_TOKEN = process.env.TELEGRAM_API_TOKEN;
-const TG_PATH = "/tg" + TG_TOKEN.substring(12, 20);
+const TG_PATH = "/tg" + TG_TOKEN.replace(/[^0-9a-z]+/g, "");
 const DATABASE_URL = process.env.DATABASE_URL;
 const APP_URL = process.env.APP_URL || "";
 
-const MAX_FIND_RESULTS = process.env.MAX_FIND_RESULTS || 8;
 const IS_PRODUCTION = (process.env.NODE_ENV === 'production');
 const SCRAP_FORCE_TIME =
   process.env.SCRAP_FORCE_TIME || (IS_PRODUCTION && 6 * 3600) || 30;
@@ -38,26 +37,21 @@ function sendError(msg) {
   return bot.sendMessage(msg.chat.id, `❌️ An error occurred`);
 };
 
-// DATABASE 
+function italianTime(date) {
+  return new Date(date.toLocaleString("en-US", { timeZone: "Europe/Rome" }))
+}
+
+// DATABASE AND WEB-SCAPPER
 
 const Sequelize = require('sequelize');
-const Op = Sequelize.Op;
-
 const sequelize = new Sequelize(DATABASE_URL, { define: { timestamps: false } });
-const { BCEvent, BCLog, Watcher, Reply, Alarm, ChatSession } = sequelize.import("./db.js");
+const db = sequelize.import("./db.js");
 
-// WEB-SCAPER / BC's EVENTS COLLECTION
 const EventScraper = require('./scraper.js');
-Scraper = new EventScraper(BCEvent, BCLog, Sequelize);
+Scraper = new EventScraper(db);
 
-// SESSION
-const SessionManager = require('./session.js');
-Session = new SessionManager(ChatSession);
-
-// CHECK DATABASE AND INIZIALIZE OBJECT
-
-let startJobDB = sequelize.authenticate().then(() => {
-  return sequelize.sync({ logging: false });
+let startJobDB = sequelize.authenticate().then(async () => {
+  return await sequelize.sync({ logging: false });
 }).catch(err => {
   console.log("Database error:", err);
   process.exit(1);
@@ -65,10 +59,12 @@ let startJobDB = sequelize.authenticate().then(() => {
   console.log("Database OK");
 }).then(() => {
   Scraper.initialize();
-  Session.initialize();
 });
 
 // BOT & EXPRESS SETUP
+
+const SessionManager = require('./session.js');
+Session = new SessionManager(db);
 
 if (IS_PRODUCTION) {
   bot = new TelegramBot(TG_TOKEN);
@@ -78,7 +74,7 @@ if (IS_PRODUCTION) {
 };
 
 const Replier = require("./reply.js")
-const reply = new Replier(bot, Reply);
+const replier = new Replier(bot, db, Session);
 
 const app = express();
 var server = null;
@@ -96,16 +92,41 @@ app.set('views', path.join(__dirname, 'ejs'))
 
 var BOT_USERNAME_REGEXP = "";
 
+Session.onTooMany((delta, chat) => {
+  if (!(delta % 5) && (delta <= 20)) {
+    bot.sendMessage(chat.id, "Sto ricevendo centinaia di messaggi da questa chat, lasciami ripostare un'oretta", {});
+  }
+}, (delta, chat, queryID) => {
+  if (!(delta % 4) && (delta <= 32)) {
+    bot.answerCallbackQuery(queryID, {
+      text: "Sto ricevendo centinaia di richieste da questa chat, lasciami ripostare un'oretta"
+    });
+  }
+  if (delta == 32) bot.sendMessage(chat.id, "Sto ricevendo molte richieste da questa chat, lasciami ripostare un'oretta", {});
+})
+
 let startJobBot = bot.getMe().then((r) => {
   console.log("My username is ", r.username);
   BOT_USERNAME_REGEXP = RegExp("@" + r.username, "g");
   bot.on("message", (msg) => {
-    if (msg.text) {
-      msg.text = msg.text.replace(BOT_USERNAME_REGEXP, "");
-      console.log(`Received ${msg.text} by ${(msg.chat && msg.chat.id) || '?'}`);
+    try {
+      if (msg.text) {
+        let session = Session.message(msg.chat);
+        if (!session) {
+          msg.text = '';
+          return;
+        }
+        msg.session = session;
+        console.log("Added session");
+        msg.text = msg.text.replace(BOT_USERNAME_REGEXP, "");
+        if (!IS_PRODUCTION || process.env.DEBUG)
+          console.log(`Received ${msg.text} by ${msg.chat.id}`);
+      }
+    } catch (e) {
+      console.error(e);
     }
-    msg.chat.name = msg.chat.title || msg.chat.firstname;
   });
+}).then(() => {
   console.log("Start listening");
   server = app.listen(PORT);
 }).catch((e) => {
@@ -114,15 +135,60 @@ let startJobBot = bot.getMe().then((r) => {
   process.exit(1);
 })
 
+// CRON SETUP
+
+if (process.env.APP_SCHEDULE_COLLECTION) {
+  cron.schedule('0 10 * * * *', async () => {
+    var italian_hour = italianTime(new Date()).getHours();
+    if (!COLLECTIONS.EXEC_TIME.has(italian_hour)) return;
+    console.log("Running scheduled collection ...");
+    await Scraper.collect('', '').then(watcherSend).catch(catchAndLogError);
+    for (const p of COLLECTIONS.SPECIALS) {
+      let job = Scraper.collect(p.c, p.r);
+      job.then(watcherSend).catch(catchAndLogError);
+      await job;
+    }
+  });
+};
+
+// Keep application running on Heroku
+if (IS_PRODUCTION && APP_URL) {
+  cron.schedule('0 */20 * * * *', () => {
+    if (process.env.KEEP_UP || replier.isActive()) {
+      console.log(`Keep running: Request ${APP_URL} to avoid being put to sleep`);
+      axios.get(APP_URL).catch(
+        error => { console.log("Keep running: Error:", error); }
+      );
+    }
+  });
+}
+
+let collectionJob = startJobBot.then(async () => {
+  await startJobDB;
+}).then(async () => {
+  // If no collection has been performed in the last SCRAP_FORCE_TIME seconds
+  //  then one is ran now
+  let collections = await Scraper.getLastCollection(true, true, false);
+  if (
+    (!collections.successful) ||
+    ((new Date() - collections.last.date) > SCRAP_FORCE_TIME * 1000) ||
+    ((new Date() - collections.successful.date) > 2000 * SCRAP_FORCE_TIME)
+  ) {
+    await Scraper.collect('', '').catch(catchAndLogError);
+  } else {
+    console.log(`A collection has been run ${(new Date() - collections.last.date) / 1000}s ago`);
+  }
+})
+
 // WATCHER EVENT NOTIFICATION
 
 async function watchEvent() {
   console.log("Looking for unwatched events");
   let foundNotificationMessages = {};
-  let list = await BCEvent.count({
+  let list = await db.BCEvent.count({
     where: {
       hasBeenWatched: false,
-      // [Op.and]: [Sequelize.literal(
+      // [db.Op.and]: [Sequelize.literal(
       //   'EXISTS (SELECT * FROM watchers WHERE watchers.category::text = bc_event.category::text)'
       // )]
     },
@@ -130,14 +196,14 @@ async function watchEvent() {
     group: ['category', 'regione']
   });
   for (const params of list) {
-    let eventsQuery = BCEvent.findAll({
+    let eventsQuery = db.BCEvent.findAll({
       where: {
         hasBeenWatched: false,
         category: params.category,
         regione: params.regione,
       }
     });
-    let watchersQuery = Watcher.findAll({
+    let watchersQuery = db.Watcher.findAll({
       where: {
         category: params.category,
         regione: params.regione,
@@ -147,50 +213,62 @@ async function watchEvent() {
     events = await eventsQuery;
     watchers = await watchersQuery;
     let notificationRefs = watchers.map(
-      (w) => w.chatId
+      (w) => w.chatID
     ).filter(
       (id) => (!foundNotificationMessages[id])
     ).map(
-      (chatID) => reply.message(MESSAGES.ONFOUND, { id: chatID }, {})
+      (chatID) => replier.message(MESSAGES.ONFOUND, { id: chatID }, {})
     );
     for (const ref of notificationRefs) {
-      let r = await reply.response(ref);
+      let r = await replier.response(ref);
       if (r.chat) foundNotificationMessages[r.chat.id] = r.message_id;
     }
     for (const event of events) {
       let refs = watchers.map(
-        (w) => reply.message(MESSAGES.EVENT, { id: w.chatId }, {
+        (w) => replier.message(MESSAGES.EVENT, { id: w.chatID }, {
           event: event.dataValues,
-          reply_to: foundNotificationMessages[w.chatId],
+          reply_to: foundNotificationMessages[w.chatID],
         })
       )
       await wait(100);
-      for (const ref of refs) await reply.response(ref);
-      BCEvent.update({
+      for (const ref of refs) await replier.response(ref);
+      db.BCEvent.update({
         hasBeenWatched: true,
       }, {
-        where: { bcId: event.bcId }
+        where: { bc: event.bc }
       }).catch(catchAndLogError);
     }
   }
 }
 
-// START, ABOUT, AND STATUS COMMAND
+// Run watchEvent at startup
+collectionJob.then(watchEvent);
+
+// BOT: START, ABOUT, AND STATUS COMMAND
 
 bot.onText(/\/start/, (msg, match) => {
   console.log("\/started by", msg.chat.id);
-  reply.message(MESSAGES.WELCOME, msg.chat, {});
+  replier.message(MESSAGES.WELCOME, msg.chat, {});
 });
 
 bot.onText(/\/about/, (msg, match) => {
   console.log("\/about to", msg.chat.id);
-  reply.message(MESSAGES.ABOUT, msg.chat, {});
+  replier.message(MESSAGES.ABOUT, msg.chat, {});
 });
 
 bot.onText(/\/status/, (msg, match) => {
   console.log("\/about to", msg.chat.id);
-  Scraper.get_last_collection(true, true, true).then((collections) => {
-    reply.message(MESSAGES.STATUS, msg.chat, collections);
+  Scraper.getLastCollection(true, true, true).then((results) => {
+    let L = [results.last, results.successful, results.unempty];
+    let options = { year: 'numeric', month: 'long', day: 'numeric' };
+    let R = L.map((item) => Object({
+      status: item.status,
+      date: italianTime(item.date).toLocaleDateString('it-IT', options),
+      time: italianTime(item.date).toLocaleTimeString('it-IT', options),
+    }))
+    return { last: L[0], successful: L[1], unempty: L[2] }
+  }).then((collections) => {
+    replier.message(MESSAGES.STATUS, msg.chat, collections);
   })
 });
 
@@ -234,8 +312,8 @@ async function searchProcess(selectionObj) {
     return [selectionObj, { status: 'select' }];
   if (selectionObj.step < SELECTION.COMPLETE) {
     // Add results grouped by regione
-    let list = await BCEvent.count({
-      where: { category: selectionObj.cat, startdate: { [Op.gte]: today() } },
+    let list = await db.BCEvent.count({
+      where: { category: selectionObj.cat, startdate: { [db.Op.gte]: today() } },
       attributes: ["regione"],
       group: ['regione']
     });
@@ -248,9 +326,9 @@ async function searchProcess(selectionObj) {
     return [selectionObj, { status: 'select' }];
   }
   // Search is complete
-  let count = await BCEvent.count({
+  let count = await db.BCEvent.count({
     where: {
-      startdate: { [Op.gte]: today() },
+      startdate: { [db.Op.gte]: today() },
       regione: selectionObj.reg,
       category: selectionObj.cat,
     }
@@ -282,16 +360,16 @@ async function searchCallback(replyObj, action = "", ...params) {
     if (JSON.stringify(extra_data) != JSON.stringify(replyObj.data)) {
       replyObj.update({ data: extra_data }).catch(catchAndLogError)
     }
-    reply.update(replyObj, reply_data);
+    replier.update(replyObj, reply_data);
     return [true, ''];
   }
   if (action == "show") {
     if (replyObj.data.status != "complete") return [false, "Ricerca non conclusa"];
     if (!(replyObj.data.reg && replyObj.data.cat)) return [false, "Missing data"];
     let chatID = replyObj.chatID;
-    let searchResults = await BCEvent.findAndCountAll({
+    let searchResults = await db.BCEvent.findAndCountAll({
       where: {
-        startdate: { [Op.gte]: today() },
+        startdate: { [db.Op.gte]: today() },
         regione: replyObj.data.reg,
         category: replyObj.data.cat,
       },
@@ -299,8 +377,8 @@ async function searchCallback(replyObj, action = "", ...params) {
     }).catch(e => { console.error("Error looking for results", e); return [] })
     let promises = searchResults.rows.map(
       (item) => {
-        let ref = reply.message(MESSAGES.EVENT, { id: chatID }, { event: item });
-        return reply.save(MESSAGES.EVENT, ref)
+        let ref = replier.message(MESSAGES.EVENT, { id: chatID }, { event: item });
+        return replier.save(MESSAGES.EVENT, ref)
       });
     let extra_data = Object(replyObj.data);
     extra_data.status = "end";
@@ -314,7 +392,7 @@ async function searchCallback(replyObj, action = "", ...params) {
     let reply_data = Object(extra_data);
     reply_data.step = SELECTION.COMPLETE;
     reply_data.count = searchResults.count;
-    reply.update(replyObj, reply_data);
+    replier.update(replyObj, reply_data);
     if (!promises.every(async (p) => (await p))) {
       return [false, "Errore nell'invio dei messaggi"];
     }
@@ -325,14 +403,14 @@ async function searchCallback(replyObj, action = "", ...params) {
     let selectionObj = parseSelection('', replyObj.data.cat, '', replyObj.data.reg);
     let [reply_data, extra_data] = await searchProcess(selectionObj)
     replyObj.update({ data: extra_data }).catch(catchAndLogError)
-    reply.update(replyObj, reply_data);
+    replier.update(replyObj, reply_data);
     return [true, ''];
   }
   if (action == "restart") {
     if (replyObj.data.status != "end") return [false, "Ricerca non terminata"];
     let [reply_data, extra_data] = await searchProcess(parseSelection())
     replyObj.update({ data: extra_data }).catch(catchAndLogError);
-    reply.update(replyObj, reply_data);
+    replier.update(replyObj, reply_data);
     return [true, ''];
   }
   return [false, 'Invalid action'];
@@ -341,9 +419,9 @@ async function searchCallback(replyObj, action = "", ...params) {
 async function watcherProcess(selectionObj, chatID) {
   if (selectionObj.step < SELECTION.COMPLETE)
     return [selectionObj, false];
-  let [ok, result] = await Watcher.findOrCreate({
+  let [ok, result] = await db.Watcher.findOrCreate({
     where: {
-      chatId: chatID,
+      chatID: chatID,
       category: selectionObj.cat,
       regione: selectionObj.reg,
     },
@@ -371,18 +449,18 @@ async function watchCallback(replyObj, action = "", ...params) {
       watcher.msgId = replyObj.msgID;
       await watcher.save()
     }
-    reply.update(replyObj, reply_data);
+    replier.update(replyObj, reply_data);
     if (!watcher) return [true, 'Scegli e clicca'];
     return [true, 'Creato']
   }
   if (action == "new") {
-    let ref = reply.message(MESSAGES.WATCH, { id: replyObj.chatID }, { step: SELECTION.BRANCA });
-    await reply.save(MESSAGES.WATCH, ref, { status: 'select' });
+    let ref = replier.message(MESSAGES.WATCH, { id: replyObj.chatID }, { step: SELECTION.BRANCA });
+    await replier.save(MESSAGES.WATCH, ref, { status: 'select' });
     return [true, ''];
   }
   if (action == 'cancel') {
     if (replyObj.data.status != 'active') return [false, "Non c'è niente di attivo"];
-    let watcher = await Watcher.findByPk(replyObj.data.id).catch((e) => false);
+    let watcher = await db.Watcher.findByPk(replyObj.data.id).catch((e) => false);
     if (!watcher) return [false, "Nessun osservatore attivo associato"];
     let reply_data = {
       step: SELECTION.COMPLETE,
@@ -392,49 +470,49 @@ async function watchCallback(replyObj, action = "", ...params) {
     }
     await watcher.destroy().catch(e => e).then(r => console.log(r));
     replyObj.update({ data: { status: 'cancelled' } });
-    reply.update(replyObj, reply_data);
+    replier.update(replyObj, reply_data);
     return [false, "Non implementato"];
   }
 }
 
 // BOT: SET UP SEARCH AND WATCH FUNCTION
 
-bot.onText(/\/cerca[ _]*$/, Session.runWith((msg, match) => {
-  let ref = reply.message(MESSAGES.SEARCH, msg.chat, { step: SELECTION.BRANCA, });
-  reply.save(MESSAGES.SEARCH, ref, { status: 'select' });
-}));
+bot.onText(/\/cerca[ _]*$/, (msg, match) => {
+  let ref = replier.message(MESSAGES.SEARCH, msg.chat, { step: SELECTION.BRANCA, });
+  replier.save(MESSAGES.SEARCH, ref, { status: 'select' });
+});
 
-bot.onText(/\/cerca[ _]+([a-zA-Z0-9]*)[ _]*(.*)/, Session.runWith((msg, match) => {
+bot.onText(/\/cerca[ _]+([a-zA-Z0-9]*)[ _]*(.*)/, (msg, match) => {
   let c = match[1].toLowerCase();
   let r = match[2].trim().replace(/[_ 'x]/g, "").toLowerCase();
   let selectionObj = parseSelection('', c, '', r);
   searchProcess(selectionObj).then(([reply_data, status]) => {
-    let ref = reply.message(MESSAGES.SEARCH, msg.chat, reply_data);
-    reply.save(MESSAGES.SEARCH, ref, status);
+    let ref = replier.message(MESSAGES.SEARCH, msg.chat, reply_data);
+    replier.save(MESSAGES.SEARCH, ref, status);
   }).catch(catchAndLogError);
-}));
+});
 
-bot.onText(/\/osserva[ _]*$/, Session.runWith((msg, match) => {
-  let ref = reply.message(MESSAGES.WATCH, msg.chat, { step: SELECTION.BRANCA, });
-  reply.save(MESSAGES.WATCH, ref, { status: 'select' });
-}));
+bot.onText(/\/osserva[ _]*$/, (msg, match) => {
+  let ref = replier.message(MESSAGES.WATCH, msg.chat, { step: SELECTION.BRANCA, });
+  replier.save(MESSAGES.WATCH, ref, { status: 'select' });
+});
 
-bot.onText(/\/osserva[ _]+([a-zA-Z0-9]+)[ _]*(.*)/, Session.runWith(async (msg, match) => {
+bot.onText(/\/osserva[ _]+([a-zA-Z0-9]+)[ _]*(.*)/, async (msg, match) => {
   let c = match[1].toLowerCase();
   let r = match[2].trim().replace(/[_ 'x]/g, "").toLowerCase();
   let selectionObj = parseSelection('', c, '', r);
   watcherProcess(selectionObj, msg.chat.id).then(async ([reply_data, watcher]) => {
     let extra_data = { status: 'select' };
-    let ref = reply.message(MESSAGES.WATCH, msg.chat, reply_data);
+    let ref = replier.message(MESSAGES.WATCH, msg.chat, reply_data);
     if (watcher) {
-      response = await reply.response(ref);
+      response = await replier.response(ref);
       watcher.msgId = response.message_id;
       extra_data = { status: 'active', id: watcher.id };
       await watcher.save();
     }
-    reply.save(MESSAGES.WATCH, ref, extra_data);
+    replier.save(MESSAGES.WATCH, ref, extra_data);
   }).catch(catchAndLogError);
-}));
+});
 
 function oldWarning(msg, match) {
   bot.sendMessage(msg.chat.id, "❌️ SONO CAMBIATO: usa /cerca o /osserva");
@@ -461,20 +539,20 @@ async function cancelFindList(chatID, searchWatchers = true, searchAlarms = true
   let watchersQuery = [];
   let alarmEventsQuery = [];
   if (searchWatchers) {
-    watchersQuery = Watcher.findAll({
-      where: { chatId: chatID, expiredate: { [Op.gte]: new Date() } },
+    watchersQuery = db.Watcher.findAll({
+      where: { chatID: chatID, expiredate: { [db.Op.gte]: new Date() } },
       attributes: ['category', 'regione'],
     }).then((r) => r.map(
       (w) => `Tipo ${CATEGORIES.EMOJI(w.category)}${CATEGORIES[w.category].human} regione ${REGIONI[w.regione].human}`
     ));
   }
   if (searchAlarms) {
-    alarmEventsQuery = BCEvent.findAll({
+    alarmEventsQuery = db.BCEvent.findAll({
       include: [{
-        model: Alarm,
+        model: db.Alarm,
         where: { warning: true },
         include: [{
-          model: Reply,
+          model: db.Reply,
           where: { chatID: chatID },
         }]
       }],
@@ -487,8 +565,6 @@ async function cancelFindList(chatID, searchWatchers = true, searchAlarms = true
     watchers: await watchersQuery,
     alarmEvents: await alarmEventsQuery,
   };
-  // data.watchers = await watchersQuery;
-  // data.alarmEvents = await alarmEventsQuery;
   return data;
 }
 
@@ -498,7 +574,7 @@ async function cancelHandler(msg, match) {
     let wid = Number(match[1]);
     console.log("wid", wid)
     if (wid) {
-      let single = Watcher.findByPk(wid).then(
+      let single = db.Watcher.findByPk(wid).then(
         async (r) => {
           console.log("r", r);
           await r.destroy();
@@ -512,10 +588,10 @@ async function cancelHandler(msg, match) {
     console.log("Error on \/anulla, old part", e);
   }
   cancelFindList(msg.chat.id).then(async (data) => {
-    let ref = reply.message(MESSAGES.CANCEL, msg.chat, data);
-    let replyMsg = await reply.response(ref);
+    let ref = replier.message(MESSAGES.CANCEL, msg.chat, data);
+    let replyMsg = await replier.response(ref);
     if (replyMsg.ok) {
-      Reply.create({
+      db.Reply.create({
         type: sequelize.CANCEL_REPLY,
         chatID: msg.chat.id,
         msgID: replyMsg.message_id,
@@ -529,7 +605,7 @@ async function cancelHandler(msg, match) {
 
 async function cancelCallback(replyObj, action = "", target = "") {
   update = async () => await cancelFindList(replyObj.chatID).then(
-    data => { reply.update(replyObj, data); },
+    data => { replier.update(replyObj, data); },
     (e) => {
       console.error("Error on \/annulla", e);
       sendError();
@@ -538,8 +614,8 @@ async function cancelCallback(replyObj, action = "", target = "") {
     switch (action) {
       case ("del"):
         if (target == "watch") {
-          await Watcher.destroy({
-            where: { chatId: replyObj.chatID },
+          await db.Watcher.destroy({
+            where: { chatID: replyObj.chatID },
           }).catch(catchAndLogError);
           // TO DO: change watchers replies text
           await update().catch(catchAndLogError);
@@ -572,7 +648,7 @@ async function cancelCallback(replyObj, action = "", target = "") {
   return [false, "Invalid parameters"];
 }
 
-bot.onText(/\/annulla[ _]*([0-9]*)/, Session.runWith(cancelHandler));
+bot.onText(/\/annulla[ _]*([0-9]*)/, (cancelHandler));
 
 // CALLBACK QUERY HANDLER
 
@@ -586,11 +662,11 @@ bot.on('callback_query', async (query) => {
       show_alert: false,
     });
   };
-  Session.callback(chat.id);
+  if (!Session.callback(chat, query.id)) return;
   let callback_params = data.split("/").map(l => l.trim());//.filter(l => l);
   let type = callback_params[0];
   if (!MESSAGES.callBackSet.has(type)) return exitWithAlert("Invalid query");
-  let messages = await Reply.findAndCountAll({
+  let messages = await db.Reply.findAndCountAll({
     where: {
       chatID: chat.id,
       msgID: message_id,
@@ -626,22 +702,24 @@ bot.on('callback_query', async (query) => {
 
 // ON SIGINT OR SIGTERM
 
+var isSignalAlreadyReceived = false;
+
 function signalHandler(SIGNAL) {
   console.log("Received", SIGNAL);
+  if (isSignalAlreadyReceived) {
+    setTimeout(() => { process.exit(0); }, 1000);
+    return;
+  }
   Scraper.pause();
   server.close();
   bot.stopPolling();
   bot.closeWebHook();
-  wait(1000).then(
-    async () => { await Scraper.finish(); }
-  ).then(
-    async () => { await Session.saveAll(); }
-  ).then(
+  Scraper.finish().then(
     () => { console.log("Sessions saved"); },
     (e) => { console.error("Error", e); }
   ).then(
     async () => {
-      while (reply.isActive()) {
+      while (replier.isActive()) {
         console.log("Waiting for messages to be sent");
         await wait(1000);
       };
@@ -650,73 +728,10 @@ function signalHandler(SIGNAL) {
     console.log("Quit!");
     process.exit();
   });
-  wait(25000).then(() => {
-    process.exit(10);
-  })
+  setTimeout(() => { process.exit(0); }, 29900);
+  isSignalAlreadyReceived = true;
   return 1;
 }
 
 process.on("SIGINT", signalHandler);
 process.on("SIGTERM", signalHandler);
-
-// CRON SETUP
-
-
-
-if (process.env.APP_SCHEDULE_COLLECTION) {
-  cron.schedule('0 10 * * * *', async () => {
-    var italian_hour = new Date(new Date().toLocaleString("en-US", { timeZone: "Europe/Rome" })).getHours();
-    console.log(italian_hour);
-    if (!COLLECTIONS.EXEC_TIME.has(italian_hour)) return;
-    console.log("Running scheduled collection ...");
-    await Scraper.collect('', '').then(watcherSend).catch(catchAndLogError);
-    for (const p of COLLECTIONS.SPECIALS) {
-      let job = Scraper.collect(p.c, p.r);
-      job.then(watcherSend).catch(catchAndLogError);
-      await job;
-    }
-  });
-};
-
-if (IS_PRODUCTION && APP_URL) {
-  cron.schedule('0 */20 * * * *', () => {
-    if (process.env.KEEP_UP) {
-      console.log(`Keep up: Request ${APP_URL} to avoid sleep`);
-      axios.get(APP_URL).catch(
-        error => { console.log("Keep up: Error:", error); }
-      );
-    }
-  });
-}
-
-startJobDB.then(() => {
-  cron.schedule('0 0 1 * * *', async () => {
-    console.log("chat reset");
-    Session.counterReset();
-  });
-});
-
-startJobBot.then(async () => {
-  await startJobDB;
-}).then(
-  watchEvent
-).then(async () => {
-  // If no collection has been performed in the last SCRAP_FORCE_TIME seconds
-  //  then one is ran now
-  let collections = await Scraper.get_last_collection(true, true, false);
-  if (
-    (!collections.successful) ||
-    ((new Date() - collections.last.date) > SCRAP_FORCE_TIME * 1000) ||
-    ((new Date() - collections.successful.date) > 2000 * SCRAP_FORCE_TIME)
-  ) {
-    r = await Scraper.collect('', '').catch(catchAndLogError);
-    if (r.length) {
-      axios.get(APP_URL).catch(
-        error => { console.log("Keep up: Error:", error); }
-      );
-      watchEvent().catch(catchAndLogError);
-    }
-  } else {
-    console.log(`A collection has been run ${(new Date() - collections.last.date) / 1000}s ago`);
-  }
-})

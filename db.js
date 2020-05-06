@@ -18,7 +18,12 @@ module.exports = function (sequelize, DateTypes) {
         'OK', 'INCOMPLETE', 'BC_ERROR', 'NET_ERROR', 'PARSE_ERROR', 'DB_ERROR', 'OTHER_ERROR'
     ]
 
-    const BCLog = sequelize.define('bc_log', {
+    const db = {
+        Op: Sequelize.Op,
+        sequelize: sequelize,
+    };
+
+    db.BCLog = sequelize.define('bc_log', {
         status: {
             type: Sequelize.ENUM,
             values: sequelize.BC_STATUS_CHOICES,
@@ -37,8 +42,8 @@ module.exports = function (sequelize, DateTypes) {
         }
     }, {});
 
-    const BCEvent = sequelize.define('bc_event', {
-        bcId: {
+    db.BCEvent = sequelize.define('bc_event', {
+        bc: {
             type: Sequelize.INTEGER,
             allowNull: false,
             unique: true,
@@ -67,13 +72,13 @@ module.exports = function (sequelize, DateTypes) {
         },
     }, {});
 
-    const Watcher = sequelize.define('watcher', {
-        chatId: {
+    db.Watcher = sequelize.define('watcher', {
+        chatID: {
             type: Sequelize.BIGINT,
             allowNull: false,
             field: "chat_id"
         },
-        msgId: {
+        msgID: {
             type: Sequelize.BIGINT,
             field: "msg_id",
         },
@@ -94,7 +99,7 @@ module.exports = function (sequelize, DateTypes) {
         },
     }, {});
 
-    const Reply = sequelize.define('reply', {
+    db.Reply = sequelize.define('reply', {
         type: {
             type: Sequelize.ENUM,
             values: [
@@ -117,7 +122,7 @@ module.exports = function (sequelize, DateTypes) {
         },
     }, {});
 
-    const Alarm = sequelize.define('alarm', {
+    db.Alarm = sequelize.define('alarm', {
         warning: {
             type: Sequelize.BOOLEAN,
             defaultValue: false,
@@ -128,41 +133,11 @@ module.exports = function (sequelize, DateTypes) {
         },
     }, {});
 
-    Alarm.belongsTo(BCEvent, { onDelete: 'cascade' });
-    BCEvent.hasMany(Alarm);
-    Alarm.belongsTo(Reply, { onDelete: 'cascade' });
-    Reply.hasMany(Alarm);
+    db.Alarm.belongsTo(db.BCEvent, { onDelete: 'cascade' });
+    db.BCEvent.hasMany(db.Alarm);
+    db.Alarm.belongsTo(db.Reply, { onDelete: 'cascade' });
+    db.Reply.hasMany(db.Alarm);
 
-    const ChatSession = sequelize.define('chat_session', {
-        chatId: {
-            type: Sequelize.BIGINT,
-            allowNull: false,
-            field: "chat_id"
-        },
-        status: {
-            type: Sequelize.JSONB,
-        },
-        isBanned: {
-            type: Sequelize.BOOLEAN,
-            defaultValue: false,
-            field: "is_banned"
-        },
-        dailyCounter: {
-            type: Sequelize.SMALLINT,
-            defaultValue: 1,
-            field: "counter"
-        },
-        callbackCounter: {
-            type: Sequelize.SMALLINT,
-            defaultValue: 1,
-            field: "callback_counter",
-        },
-        date: {
-            type: Sequelize.DATE,
-            defaultValue: Sequelize.NOW
-        }
-    }, {});
-
-    return { BCEvent, BCLog, Watcher, Reply, Alarm, ChatSession }
+    return db
 
 }

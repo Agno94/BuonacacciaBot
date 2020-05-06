@@ -1,119 +1,77 @@
-const DAY_MAX_MSGS = 400;
+const MAX_HOUR_MSGS = 100;
+const MAX_HOUR_CBQS = 400;
 
 class SessionManager {
 
-    constructor(ChatSession, whenBanned) {
-        this.ChatSession = ChatSession;
-        this._banned_set = new Set();
-        // this._list = {};
-        // this._id_list = [];
-        this._whenBanned = whenBanned || ((id) => { console.log(id, "Banned") });
+    constructor() {
+        this.chats = {};
+        this.privateSet = new Set();
+        this._onManyMessage = (id) => console.log(`Refused message from ${id}`);
+        this._onManyCallback = (id) => console.log(`Refused callback from ${id}`);
+        this.counterReset();
     }
 
-    initialize() {
-        this._list = {};
-        this._id_list = [];
-        this.ChatSession.findAll({
-            where: { isBanned: true },
-            attributes: ['chatId'],
-        }).then(r => {
-            this._banned_set = new Set(r.map((x) => x.chatId));
-        }).catch(e => {
-            console.log("Fetching banned list failed");
-            console.log(e);
-        });
+    updateInfo(chat) {
+        let id = chat.id;
+        if (!id) return false;
+        chat.name = chat.title || chat.firstname;
+        if (!this.chats[id]) this.chats[id] = chat
+        else Object.assign(this.chats[id], chat);
+        if (chat.type == "private") this.privateSet.add(id.toString());
+        if (!this.counters[id]) this.counters[id] = {
+            messages: 0,
+            callbacks: 0,
+        };
+        if (!this.chats[id].session) this.chats[id].session = {};
     }
 
-    isChatBanned(chatId) {
-        this._banned_set.has(chatId);
-    }
-
-    async _findOrCreate(id) {
-        let session = null;
-        if (!this._list[id]) {
-            session = (await this.ChatSession.findOrCreate({
-                where: { chatId: id },
-                defaults: { status: {} },
-            }))[0];
-            this._id_list.push(id);
-            this._list[id] = session;
-            session.status.temp = {};
-        } else {
-            session = this._list[id];
+    callback(chat, queryID) {
+        if (!chat.id) return false;
+        this.updateInfo(chat);
+        this.counters[chat.id].callbacks += 1;
+        console.log(chat.id, this.counters[chat.id].callbacks)
+        if (this.counters[chat.id].callbacks > MAX_HOUR_CBQS) {
+            let delta = this.counters[chat.id].callbacks - MAX_HOUR_CBQS - 1;
+            this._onManyCallback(delta, chat, queryID);
+            return false;
         }
-        return session;
+        return this.chats[chat.id].session
     }
 
-    async get(id) {
-        if (this.isChatBanned(id)) return false;
-        let session = await this._findOrCreate(id);
-        session.dailyCounter++;
-        if (session.dailyCounter > DAY_MAX_MSGS) {
-            let now = new Date()
-            if ((now - session.date) > 3600 * 24 * 1000) {
-                session.dailyCounter = 1;
-                session.date = now;
-            } else {
-                session.isBanned = true;
-                this._banned_set.add(id);
-                this._whenBanned(id);
-                session.save();
-                return false;
-            }
+    message(chat) {
+        if (!chat.id) return false;
+        if (this.counters[chat.id]) console.log(chat.id, this.counters[chat.id].messages);
+        this.updateInfo(chat);
+        console.log(chat.id, this.counters[chat.id].messages);
+        this.counters[chat.id].messages += 1;
+        console.log(chat.id, this.counters[chat.id].messages);
+        if (this.counters[chat.id].messages > MAX_HOUR_MSGS) {
+            let delta = this.counters[chat.id].messages - MAX_HOUR_MSGS - 1;
+            this._onManyMessage(delta, chat);
+            return false;
         }
-        session.save();
-        return session;
+        return this.chats[chat.id].session
     }
 
-    async counterReset() {
-        this.saveAll();
-        try {
-            await this.ChatSession.update(
-                { isBanned: false },
-                { where: { dailyCounter: 0 } }
-            )
-            this.initialize();
-            this.ChatSession.update({
-                dailyCounter: 0,
-                callbackCounter: 0,
-                date: new Date(),
-            }, { where: {} });
-        } catch (err) {
-            console.log("Error resetting counters and banned list", err);
-        }
+    isPrivate(id) {
+        return this.privateSet.has(id.toString());
     }
 
-    async saveAll() {
-        let queries = [];
-        for (const id of this._id_list) {
-            delete this._list[id].status.temp;
-            queries.push(this._list[id].update({
-                status: this._list[id].status
-            }));
-        }
-        for (const q of queries) await q;
-        return;
+    chatInfo(chatID) {
+        return this.chats[chatID];
     }
 
-    callback(id) {
-        this._findOrCreate(id).then((session) => {
-            session.callbackCounter += 1;
-            session.save();
-        })
+    onTooMany(onMessage, onCallback) {
+        if (onMessage) this._onManyMessage = onMessage;
+        if (onCallback) this._onManyCallback = onCallback;
     }
 
-    runWith(F) {
-        // Run every fuction adding a session property to the incoming message
-        return (async function (msg, ...Args) {
-            let session = await this.get(msg.chat.id);
-            if (session) {
-                msg.session = session;
-                msg.processed = true;
-                await F(msg, ...Args);
-                msg.session.update({ status: msg.session.status });
-            };
-        }).bind(this);
-    };
+    counterReset() {
+        this.counters = {};
+        setTimeout(() => {
+            this.counterReset()
+        }, 30 * 1000);
+    }
 }
 
 module.exports = SessionManager;

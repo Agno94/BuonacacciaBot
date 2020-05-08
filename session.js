@@ -29,7 +29,6 @@ class SessionManager {
         if (!chat.id) return false;
         this.updateInfo(chat);
         this.counters[chat.id].callbacks += 1;
-        console.log(chat.id, this.counters[chat.id].callbacks)
         if (this.counters[chat.id].callbacks > MAX_HOUR_CBQS) {
             let delta = this.counters[chat.id].callbacks - MAX_HOUR_CBQS - 1;
             this._onManyCallback(delta, chat, queryID);
@@ -40,11 +39,8 @@ class SessionManager {
 
     message(chat) {
         if (!chat.id) return false;
-        if (this.counters[chat.id]) console.log(chat.id, this.counters[chat.id].messages);
         this.updateInfo(chat);
-        console.log(chat.id, this.counters[chat.id].messages);
         this.counters[chat.id].messages += 1;
-        console.log(chat.id, this.counters[chat.id].messages);
         if (this.counters[chat.id].messages > MAX_HOUR_MSGS) {
             let delta = this.counters[chat.id].messages - MAX_HOUR_MSGS - 1;
             this._onManyMessage(delta, chat);
@@ -70,7 +66,7 @@ class SessionManager {
         this.counters = {};
         setTimeout(() => {
             this.counterReset()
-        }, 30 * 1000);
+        }, 3600 * 1000);
     }
 }
 

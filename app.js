@@ -27,7 +27,7 @@ function wait(ms) {
   return new Promise(r => setTimeout(r, ms));
 };
 
-function today() { return new Date(new Date().toDateString()); };
+function today() { return new Date(new Date().toISOString().slice(0, 10)); };
 
 function catchAndLogError(e) {
   console.error("Error", e.message, e);
@@ -117,14 +117,11 @@ let startJobBot = bot.getMe().then((r) => {
           return;
         }
         msg.session = session;
-        console.log("Added session");
         msg.text = msg.text.replace(BOT_USERNAME_REGEXP, "");
         if (!IS_PRODUCTION || process.env.DEBUG)
           console.log(`Received ${msg.text} by ${msg.chat.id}`);
       }
-    } catch (e) {
-      console.error(e);
-    }
+    } catch (e) { console.error(e); }
   });
 }).then(() => {
   console.log("Start listening");
@@ -135,37 +132,9 @@ let startJobBot = bot.getMe().then((r) => {
   process.exit(1);
 })
 
-// CRON SETUP
+// PERIODIC JOB
 
-if (process.env.APP_SCHEDULE_COLLECTION) {
-  cron.schedule('0 10 * * * *', async () => {
-    var italian_hour = italianTime(new Date()).getHours();
-    if (!COLLECTIONS.EXEC_TIME.has(italian_hour)) return;
-    console.log("Running scheduled collection ...");
-    await Scraper.collect('', '').then(watcherSend).catch(catchAndLogError);
-    for (const p of COLLECTIONS.SPECIALS) {
-      let job = Scraper.collect(p.c, p.r);
-      job.then(watcherSend).catch(catchAndLogError);
-      await job;
-    }
-  });
-};
-
-// Keep application running on Heroku
-if (IS_PRODUCTION && APP_URL) {
-  cron.schedule('0 */20 * * * *', () => {
-    if (process.env.KEEP_UP || replier.isActive()) {
-      console.log(`Keep running: Request ${APP_URL} to avoid being put to sleep`);
-      axios.get(APP_URL).catch(
-        error => { console.log("Keep running: Error:", error); }
-      );
-    }
-  });
-}
-
-let collectionJob = startJobBot.then(async () => {
-  await startJobDB;
-}).then(async () => {
+async function checkRunCollection() {
   // If no collection has been performed in the last SCRAP_FORCE_TIME seconds
   //  then one is ran now
   let collections = await Scraper.getLastCollection(true, true, false);
@@ -175,12 +144,16 @@ let collectionJob = startJobBot.then(async () => {
     ((new Date() - collections.successful.date) > 2000 * SCRAP_FORCE_TIME)
   ) {
     await Scraper.collect('', '').catch(catchAndLogError);
+    for (const p of COLLECTIONS.SPECIALS) await Scraper.collect(p.c, p.r);
   } else {
-    console.log(`A collection has been run ${(new Date() - collections.last.date) / 1000}s ago`);
+    console.log(`A collection has been run ${(new Date() - collections.last.date) / 1000}s ago, skipping`);
   }
-})
+}
 
-// WATCHER EVENT NOTIFICATION
+// Run checkRunCollection at startup
+let collectionJob = startJobBot.then(async () => {
+  await startJobDB;
+}).then(checkRunCollection)
 
 async function watchEvent() {
   console.log("Looking for unwatched events");
@@ -242,7 +215,92 @@ async function watchEvent() {
 }
 
 // Run watchEvent at startup
-collectionJob.then(watchEvent);
+collectionJob.then(watchEvent).catch(catchAndLogError);
+
+const MORNING_ALARM_TIME = 8;
+const EVENING_ALARM_TIME = 17;
+function isAlarmHour(hour) {
+  return (hour == MORNING_ALARM_TIME) || (hour == EVENING_ALARM_TIME);
+}
+
+async function alarmSend(hour) {
+  console.log("Checking for alarm and sending notification ... ");
+  const SUBSCRIPTION = 1;
+  const START = 2;
+  const END = 3;
+  async function sendNotification(type, list) {
+    console.log(list.map(e => e.dataValues));
+    for (const alarm of list) {
+      let chat = Session.chatInfo(alarm.reply.chatID) || { id: alarm.reply.chatID };
+      //SEND
+    }
+  }
+  if (hour == MORNING_ALARM_TIME) {
+    let alarms = await db.Alarm.findAll({
+      where: { warning: true, },
+      include: [{
+        model: db.BCEvent,
+        where: { subscriptiondate: today() },
+      }, db.Reply,],
+      //groud by ???
+    }).catch(catchAndLogError);
+    await sendNotification(SUBSCRIPTION, alarms).catch(catchAndLogError);
+  }
+  if (hour == EVENING_ALARM_TIME) {
+    let tomorrow = new Date(today().getTime() + 24 * 3600 * 1000);
+    let subscrAlarms = await db.Alarm.findAll({
+      where: { warning: true, },
+      include: [{
+        model: db.BCEvent,
+        where: { subscriptiondate: tomorrow },
+      }, db.Reply],
+    }).catch(catchAndLogError);
+    let subscrJob = sendNotification(SUBSCRIPTION, subscrAlarms).catch(catchAndLogError);
+    let startAlarms = await db.Alarm.findAll({
+      where: { warning: true, },
+      include: [{
+        model: db.BCEvent,
+        where: { startdate: tomorrow },
+      }, db.Reply],
+    }).catch(catchAndLogError);
+    await subscrJob;
+    let startJob = sendNotification(START, startAlarms).catch(catchAndLogError);
+    let endAlarms = await db.Alarm.findAll({
+      where: { warning: true, },
+      include: [{
+        model: db.BCEvent,
+        where: {
+          enddate: tomorrow,
+          startdate: { [db.Op.lt]: today() },
+        },
+      }, db.Reply],
+    }).catch(catchAndLogError);
+    await startJob
+    await sendNotification(END, endAlarms).catch(catchAndLogError);
+  }
+}
+
+// Job to be run every hour
+cron.schedule('0 13 * * * *', async () => {
+  let italianHour = italianTime(new Date()).getHours();
+  if (isAlarmHour(italianHour)) await alarmSend(italianHour).catch(catchAndLogError);
+  else console.log("not checking alarm");
+  if (!COLLECTIONS.EXEC_TIME.has(italianHour)) await checkRunCollection();
+  await watchEvent().catch(catchAndLogError);
+});
+
+// Keep application running on Heroku
+if (IS_PRODUCTION && APP_URL) {
+  cron.schedule('0 */20 * * * *', () => {
+    let italianHour = italianTime(new Date()).getHours();
+    if (process.env.KEEP_UP || replier.isActive() || isAlarmHour(italianHour)) {
+      console.log(`Keep running: Request ${APP_URL} to avoid being put to sleep`);
+      axios.get(APP_URL).catch(
+        error => { console.log("Keep running: Error:", error); }
+      );
+    }
+  });
+}
 
 // BOT: START, ABOUT, AND STATUS COMMAND
 

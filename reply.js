@@ -123,7 +123,6 @@ class Replier {
                 ]];
 
                 break;
-
             case (MESSAGES.CANCEL):
                 params = data;
                 let lastRow = [{

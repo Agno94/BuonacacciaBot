@@ -8,8 +8,8 @@ const axios = require('axios');
 // ENVIROMENT & SETTING
 
 const PORT = process.env.PORT || 5000;
-const TG_TOKEN = process.env.TELEGRAM_API_TOKEN;
-const TG_PATH = "/tg" + TG_TOKEN.replace(/[^0-9a-z]+/g, "");
+const TELEGRAM_API_TOKEN = process.env.TELEGRAM_API_TOKEN;
+const TG_PATH = "/tg" + TELEGRAM_API_TOKEN.replace(/[^0-9a-z]+/g, "");
 const DATABASE_URL = process.env.DATABASE_URL;
 const APP_URL = process.env.APP_URL || "";
 
@@ -67,10 +67,10 @@ const SessionManager = require('./session.js');
 Session = new SessionManager(db);
 
 if (IS_PRODUCTION) {
-  bot = new TelegramBot(TG_TOKEN);
+  bot = new TelegramBot(TELEGRAM_API_TOKEN);
   bot.setWebHook(APP_URL + TG_PATH);
 } else {
-  bot = new TelegramBot(TG_TOKEN, { polling: true });
+  bot = new TelegramBot(TELEGRAM_API_TOKEN, { polling: true });
 };
 
 const Replier = require("./reply.js")
@@ -198,10 +198,15 @@ async function watchEvent() {
     }
     for (const event of events) {
       let refs = watchers.map(
-        (w) => replier.message(MESSAGES.EVENT, { id: w.chatID }, {
+        (w) => event.countAlarms({
+          where: { warning: true },
+          include: [{ model: db.Reply, where: { chatID: w.chatID }, attributes: [] }],
+          raw: true
+        }).then((hasAlarm) => replier.message(MESSAGES.EVENT, { id: w.chatID }, {
           event: event.dataValues,
           reply_to: foundNotificationMessages[w.chatID],
-        })
+          hasAlarm: Boolean(hasAlarm),
+        }))
       )
       await wait(100);
       for (const ref of refs) await replier.response(ref);
@@ -434,16 +439,23 @@ async function searchCallback(replyObj, action = "", ...params) {
       raw: true,
     }).catch(e => { console.error("Error looking for results", e); return [] })
     let promises = searchResults.rows.map(
-      (item) => {
-        let ref = replier.message(MESSAGES.EVENT, { id: chatID }, { event: item });
-        return replier.save(MESSAGES.EVENT, ref)
-      });
+      (item) => db.Alarm.count({
+        where: { warning: true, bcEventId: item.id },
+        include: [{ model: db.Reply, where: { chatID: chatID } }],
+        raw: true
+      }).then(
+        (hasAlarm) => replier.message(MESSAGES.EVENT, { id: chatID }, {
+          event: item,
+          hasAlarm: Boolean(hasAlarm),
+        })
+      ).then((ref) => replier.save(MESSAGES.EVENT, ref))
+    )
     let extra_data = Object(replyObj.data);
     extra_data.status = "end";
     promises.push(replyObj.update({ data: extra_data }));
     promises = promises.map(
       (p) => (p.then((r) => true, (e) => {
-        console.error("Error sending Search Results", response);
+        console.error("Error sending Search Results", e, e.response);
         return false
       }))
     );

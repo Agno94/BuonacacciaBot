@@ -137,6 +137,7 @@ let startJobBot = bot.getMe().then((r) => {
 async function checkRunCollection() {
   // If no collection has been performed in the last SCRAP_FORCE_TIME seconds
   //  then one is ran now
+  await Scraper.finish();
   let collections = await Scraper.getLastCollection(true, true, false);
   if (
     (!collections.successful) ||
@@ -240,53 +241,38 @@ async function alarmSend(hour) {
       //SEND
     }
   }
-  if (hour == MORNING_ALARM_TIME) {
-    let alarms = await db.Alarm.findAll({
+  async function findActiveAlarm(condition) {
+    return await db.Alarm.findAll({
       where: { warning: true, },
       include: [{
         model: db.BCEvent,
-        where: { subscriptiondate: today() },
+        where: condition,
       }, db.Reply,],
       //groud by ???
     }).catch(catchAndLogError);
+  }
+  if (hour == MORNING_ALARM_TIME) {
+    let alarms = await findActiveAlarm({ subscriptiondate: today() })
     await sendNotification(SUBSCRIPTION, alarms).catch(catchAndLogError);
   }
   if (hour == EVENING_ALARM_TIME) {
     let tomorrow = new Date(today().getTime() + 24 * 3600 * 1000);
-    let subscrAlarms = await db.Alarm.findAll({
-      where: { warning: true, },
-      include: [{
-        model: db.BCEvent,
-        where: { subscriptiondate: tomorrow },
-      }, db.Reply],
-    }).catch(catchAndLogError);
+    let subscrAlarms = await findActiveAlarm({ subscriptiondate: tomorrow });
     let subscrJob = sendNotification(SUBSCRIPTION, subscrAlarms).catch(catchAndLogError);
-    let startAlarms = await db.Alarm.findAll({
-      where: { warning: true, },
-      include: [{
-        model: db.BCEvent,
-        where: { startdate: tomorrow },
-      }, db.Reply],
-    }).catch(catchAndLogError);
+    let startAlarms = await findActiveAlarm({ startdate: tomorrow });
     await subscrJob;
     let startJob = sendNotification(START, startAlarms).catch(catchAndLogError);
-    let endAlarms = await db.Alarm.findAll({
-      where: { warning: true, },
-      include: [{
-        model: db.BCEvent,
-        where: {
-          enddate: tomorrow,
-          startdate: { [db.Op.lt]: today() },
-        },
-      }, db.Reply],
-    }).catch(catchAndLogError);
+    let endAlarms = await findActiveAlarm({
+      enddate: tomorrow,
+      startdate: { [db.Op.lt]: today() },
+    });
     await startJob
     await sendNotification(END, endAlarms).catch(catchAndLogError);
   }
 }
 
 // Job to be run every hour
-cron.schedule('0 13 * * * *', async () => {
+cron.schedule('0 10 * * * *', async () => {
   let italianHour = italianTime(new Date()).getHours();
   if (isAlarmHour(italianHour)) await alarmSend(italianHour).catch(catchAndLogError);
   else console.log("not checking alarm");
@@ -440,7 +426,7 @@ async function searchCallback(replyObj, action = "", ...params) {
     }).catch(e => { console.error("Error looking for results", e); return [] })
     let promises = searchResults.rows.map(
       (item) => db.Alarm.count({
-        where: { warning: true, bcEventId: item.id },
+        where: { warning: true, eventId: item.id },
         include: [{ model: db.Reply, where: { chatID: chatID } }],
         raw: true
       }).then(
@@ -600,7 +586,30 @@ bot.onText(/\/mostra[ _]*([0-9]*)/, oldWarning);
 // EVENT AND ALARM
 
 async function eventCallback(replyObj, action = "", ...params) {
-  return [false, "Funzione non ancora disponibile"];
+  if (action == 'alarm') {
+    let event = await db.BCEvent.findOne({ where: { bc: params[0] } });
+    if (!event) return [false, 'Trovato nessun evento richiesto'];
+    let alarms = await replyObj.getAlarms();
+    if (alarms.length > 2) return [false, 'Numero di promemoria errato'];
+    let alarm;
+    if (!alarms.length) {
+      alarm = db.Alarm.build({
+        warning: true,
+        replyId: replyObj.id,
+        eventId: event.id,
+      });
+    } else {
+      alarm = alarms[0];
+      if (alarm.eventId != event.id) return [false, 'Evento diverso dal messaggio'];
+      alarm.set('warning', !alarm.warning);
+    }
+    let r = await alarm.save().then(() => true, catchAndLogError)
+    replier.update(replyObj, { event: event, hasAlarm: alarm.warning });
+    let response = alarm.warning ? 'Promemoria attivi' : 'Promemoria disattivi';
+    if (r) return [true, response]
+    else return [true, 'Unknown']
+  }
+  return [false, "Azione non prevista"];
 }
 
 // CANCEL ACTIVE WATCHER OR ALARM
@@ -699,7 +708,7 @@ async function cancelCallback(replyObj, action = "", target = "") {
             `UPDATE alarms SET warning = false FROM alarms a INNER JOIN replies r ON a."replyId" = r."id" AND r."chat_id" = :chatID`,
             { replacements: { chatID: replyObj.chatID }, type: sequelize.QueryTypes.UPDATE },
           );
-          // TO DO: change watchers replies text
+          // TO DO: change events replies text
           await update().catch(catchAndLogError);
           return [true, "Promemoria disattivati"];
         }

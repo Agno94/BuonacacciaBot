@@ -58,7 +58,6 @@ CATEGORIES[p.event.category].human} | Regione ${emoji}${REGIONI[p.event.regione]
 🔓 Apertura iscrizioni: ${ new Date(p.event.subscriptiondate).toLocaleDateString('it-IT')}
 🔒 Chiusura iscrizioni: ${ new Date(p.event.endsubscriptiondate).toLocaleDateString('it-IT')}
 💰️ Costo: ${ p.event.cost / 100} €`
-    console.log(p);
     let alarm = `
 Promemoria relativi a questo eventi: ` + (p.hasAlarm ? `🔔 <i>Attivi</i>` : `🔕 <i>Disattivi</i>`)
     return title + body + "\n" + alarm;

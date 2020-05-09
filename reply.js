@@ -7,7 +7,6 @@ MAX_CHAT_MSG = max number of messages that can be send to a chat in 7 seconds
 MAX_NONPRIVATE_MSG = max number of messages that can be send to a group in 7 seconds
 MAX_SECOND_MSG = max number of messages that can be send globaly in 1 seconds
 */
-const MAX_FIND_RESULTS = process.env.MAX_FIND_RESULTS || 8;
 const MAX_CHAT_MSG = process.env.MAX_CHAT_MSG || 6;
 const MAX_NONPRIVATE_MSG = process.env.MAX_NONPRIVATE_MSG || 2;
 const MAX_SECOND_MSG = process.env.MAX_GROUP_MSG || 30;

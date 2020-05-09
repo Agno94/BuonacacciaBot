@@ -116,7 +116,7 @@ class Replier {
                     }
                 ], [
                     {
-                        text: "⏰ 🔔 ⏯ Attiva promemoria",
+                        text: "⏰ Attiva/Disattiva promemoria",
                         callback_data: `${MESSAGES.EVENT}/alarm/${data.event.bc}`
                     },
                 ]];

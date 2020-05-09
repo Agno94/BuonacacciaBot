@@ -232,7 +232,6 @@ function isAlarmHour(hour) {
 async function alarmSend(hour) {
   console.log("Checking for alarm and sending notification ... ");
   async function sendNotification(type, list) {
-    console.log(list.map(e => e.dataValues));
     let refs = list.map((alarm) => {
       let chat = Session.chatInfo(alarm.reply.chatID) || { id: alarm.reply.chatID };
       let data = {

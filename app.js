@@ -260,13 +260,14 @@ bot.onText(/\/status/, (msg, match) => {
   console.log("\/about to", msg.chat.id);
   Scraper.getLastCollection(true, true, true).then((results) => {
     let L = [results.last, results.successful, results.unempty];
-    let options = { year: 'numeric', month: 'long', day: 'numeric' };
+    let optionsDate = { year: 'numeric', month: 'long', day: 'numeric' };
+    let optionsTime = { hour: 'numeric', minute: 'numeric'};
     let R = L.map((item) => Object({
       status: item.status,
-      date: italianTime(item.date).toLocaleDateString('it-IT', options),
-      time: italianTime(item.date).toLocaleTimeString('it-IT', options),
+      date: italianTime(item.date).toLocaleDateString('it-IT', optionsDate),
+      time: italianTime(item.date).toLocaleTimeString('it-IT', optionsTime),
     }))
-    return { last: L[0], successful: L[1], unempty: L[2] }
+    return { last: R[0], successful: R[1], unempty: R[2] }
   }).then((collections) => {
     replier.message(MESSAGES.STATUS, msg.chat, collections);
   })

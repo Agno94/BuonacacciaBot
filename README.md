@@ -31,4 +31,5 @@ Still in progress.
 - Provide a PostgreSQL db and the connection information as the `DATABASE_URL` env variable
 - Run `node db-setup.js` to set up the database
 - Run `node app.js` to start the bot
-- Set up a way to periodicaly search for event: either set up the `KEEP_UP` env variable to always run the app (consume heroku time); or setup your server to hourly run `node job.js`
+- If running on Heroku then set up a way to periodicaly search for event: either set up the `KEEP_UP` to always run the app (consume heroku time); or setup your server to hourly run `node job.js`
+- If running on Heroku then set up a way to send event alarm:: either set up the `KEEP_UP` to always run the app; or setup your server to run `node wake.js` at 8:00 CET and 17:00 CET.

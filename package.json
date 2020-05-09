@@ -1,6 +1,6 @@
 {
   "name": "agnobuonacacciabot",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "A Node.js app that serves as telegram bot for dealing with buonacaccia.net",
   "main": "app.js",
   "dependencies": {

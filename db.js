@@ -133,8 +133,8 @@ module.exports = function (sequelize, DateTypes) {
         },
     }, {});
 
-    db.Alarm.belongsTo(db.BCEvent, { onDelete: 'cascade' });
-    db.BCEvent.hasMany(db.Alarm);
+    db.Alarm.belongsTo(db.BCEvent, { onDelete: 'cascade', foreignKey: 'eventId' });
+    db.BCEvent.hasMany(db.Alarm, { foreignKey: 'eventId' });
     db.Alarm.belongsTo(db.Reply, { onDelete: 'cascade' });
     db.Reply.hasMany(db.Alarm);
 

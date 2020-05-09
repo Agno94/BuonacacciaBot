@@ -108,7 +108,7 @@ class Replier {
                 }]];
                 break;
             case (MESSAGES.EVENT):
-                params.event = data.event;
+                params = data;
                 keyboard = [[
                     {
                         url: `https://buonacaccia.net/event.aspx?e=${data.event.bc}`,
@@ -116,10 +116,11 @@ class Replier {
                     }
                 ], [
                     {
-                        text: "⏰ 🔔 ⏯ Attiva promemoria",
+                        text: "⏰ Attiva/Disattiva promemoria",
                         callback_data: `${MESSAGES.EVENT}/alarm/${data.event.bc}`
                     },
                 ]];
+
                 break;
             case (MESSAGES.CANCEL):
                 params = data;

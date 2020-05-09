@@ -8,8 +8,8 @@ const axios = require('axios');
 // ENVIROMENT & SETTING
 
 const PORT = process.env.PORT || 5000;
-const TG_TOKEN = process.env.TELEGRAM_API_TOKEN;
-const TG_PATH = "/tg" + TG_TOKEN.replace(/[^0-9a-z]+/g, "");
+const TELEGRAM_API_TOKEN = process.env.TELEGRAM_API_TOKEN;
+const TG_PATH = "/tg" + TELEGRAM_API_TOKEN.replace(/[^0-9a-z]+/g, "");
 const DATABASE_URL = process.env.DATABASE_URL;
 const APP_URL = process.env.APP_URL || "";
 
@@ -27,7 +27,7 @@ function wait(ms) {
   return new Promise(r => setTimeout(r, ms));
 };
 
-function today() { return new Date(new Date().toDateString()); };
+function today() { return new Date(new Date().toISOString().slice(0, 10)); };
 
 function catchAndLogError(e) {
   console.error("Error", e.message, e);
@@ -67,10 +67,10 @@ const SessionManager = require('./session.js');
 Session = new SessionManager(db);
 
 if (IS_PRODUCTION) {
-  bot = new TelegramBot(TG_TOKEN);
+  bot = new TelegramBot(TELEGRAM_API_TOKEN);
   bot.setWebHook(APP_URL + TG_PATH);
 } else {
-  bot = new TelegramBot(TG_TOKEN, { polling: true });
+  bot = new TelegramBot(TELEGRAM_API_TOKEN, { polling: true });
 };
 
 const Replier = require("./reply.js")
@@ -117,14 +117,11 @@ let startJobBot = bot.getMe().then((r) => {
           return;
         }
         msg.session = session;
-        console.log("Added session");
         msg.text = msg.text.replace(BOT_USERNAME_REGEXP, "");
         if (!IS_PRODUCTION || process.env.DEBUG)
           console.log(`Received ${msg.text} by ${msg.chat.id}`);
       }
-    } catch (e) {
-      console.error(e);
-    }
+    } catch (e) { console.error(e); }
   });
 }).then(() => {
   console.log("Start listening");
@@ -135,39 +132,12 @@ let startJobBot = bot.getMe().then((r) => {
   process.exit(1);
 })
 
-// CRON SETUP
+// PERIODIC JOB
 
-if (process.env.APP_SCHEDULE_COLLECTION) {
-  cron.schedule('0 10 * * * *', async () => {
-    var italian_hour = italianTime(new Date()).getHours();
-    if (!COLLECTIONS.EXEC_TIME.has(italian_hour)) return;
-    console.log("Running scheduled collection ...");
-    await Scraper.collect('', '').then(watcherSend).catch(catchAndLogError);
-    for (const p of COLLECTIONS.SPECIALS) {
-      let job = Scraper.collect(p.c, p.r);
-      job.then(watcherSend).catch(catchAndLogError);
-      await job;
-    }
-  });
-};
-
-// Keep application running on Heroku
-if (IS_PRODUCTION && APP_URL) {
-  cron.schedule('0 */20 * * * *', () => {
-    if (process.env.KEEP_UP || replier.isActive()) {
-      console.log(`Keep running: Request ${APP_URL} to avoid being put to sleep`);
-      axios.get(APP_URL).catch(
-        error => { console.log("Keep running: Error:", error); }
-      );
-    }
-  });
-}
-
-let collectionJob = startJobBot.then(async () => {
-  await startJobDB;
-}).then(async () => {
+async function checkRunCollection() {
   // If no collection has been performed in the last SCRAP_FORCE_TIME seconds
   //  then one is ran now
+  await Scraper.finish();
   let collections = await Scraper.getLastCollection(true, true, false);
   if (
     (!collections.successful) ||
@@ -175,12 +145,16 @@ let collectionJob = startJobBot.then(async () => {
     ((new Date() - collections.successful.date) > 2000 * SCRAP_FORCE_TIME)
   ) {
     await Scraper.collect('', '').catch(catchAndLogError);
+    for (const p of COLLECTIONS.SPECIALS) await Scraper.collect(p.c, p.r);
   } else {
-    console.log(`A collection has been run ${(new Date() - collections.last.date) / 1000}s ago`);
+    console.log(`A collection has been run ${(new Date() - collections.last.date) / 1000}s ago, skipping`);
   }
-})
+}
 
-// WATCHER EVENT NOTIFICATION
+// Run checkRunCollection at startup
+let collectionJob = startJobBot.then(async () => {
+  await startJobDB;
+}).then(checkRunCollection)
 
 async function watchEvent() {
   console.log("Looking for unwatched events");
@@ -225,10 +199,15 @@ async function watchEvent() {
     }
     for (const event of events) {
       let refs = watchers.map(
-        (w) => replier.message(MESSAGES.EVENT, { id: w.chatID }, {
+        (w) => event.countAlarms({
+          where: { warning: true },
+          include: [{ model: db.Reply, where: { chatID: w.chatID }, attributes: [] }],
+          raw: true
+        }).then((hasAlarm) => replier.message(MESSAGES.EVENT, { id: w.chatID }, {
           event: event.dataValues,
           reply_to: foundNotificationMessages[w.chatID],
-        })
+          hasAlarm: Boolean(hasAlarm),
+        }))
       )
       await wait(100);
       for (const ref of refs) await replier.response(ref);
@@ -242,7 +221,79 @@ async function watchEvent() {
 }
 
 // Run watchEvent at startup
-collectionJob.then(watchEvent);
+collectionJob.then(watchEvent).catch(catchAndLogError);
+
+const MORNING_ALARM_TIME = 8;
+const EVENING_ALARM_TIME = 17;
+function isAlarmHour(hour) {
+  return (hour == MORNING_ALARM_TIME) || (hour == EVENING_ALARM_TIME);
+}
+
+async function alarmSend(hour) {
+  console.log("Checking for alarm and sending notification ... ");
+  async function sendNotification(type, list) {
+    let refs = list.map((alarm) => {
+      let chat = Session.chatInfo(alarm.reply.chatID) || { id: alarm.reply.chatID };
+      let data = {
+        event: alarm.bc_event.dataValues,
+        day: (hour == MORNING_ALARM_TIME) ? 'oggi' : 'domani',
+        reply_to: alarm.reply.msgID,
+      }
+      return replier.message(type, chat, data);
+    })
+    for (const ref of refs) await replier.response(ref);
+  }
+  async function findActiveAlarm(condition) {
+    return await db.Alarm.findAll({
+      where: { warning: true, },
+      include: [{
+        model: db.BCEvent,
+        where: condition,
+      }, db.Reply,],
+    }).catch(catchAndLogError);
+  }
+  if (hour == MORNING_ALARM_TIME) {
+    let alarms = await findActiveAlarm({ subscriptiondate: today() })
+    await sendNotification(MESSAGES.MEMO_SUB, alarms).catch(catchAndLogError);
+  }
+  if (hour == EVENING_ALARM_TIME) {
+    let tomorrow = new Date(today().getTime() + 48 * 3600 * 1000);
+    let subscrAlarms = await findActiveAlarm({ subscriptiondate: tomorrow });
+    let subscrJob = sendNotification(MESSAGES.MEMO_SUB, subscrAlarms).catch(catchAndLogError);
+    let startAlarms = await findActiveAlarm({ startdate: tomorrow });
+    await subscrJob;
+    let startJob = sendNotification(MESSAGES.MEMO_START, startAlarms).catch(catchAndLogError);
+    let endAlarms = await findActiveAlarm({
+      enddate: tomorrow,
+      startdate: { [db.Op.lt]: today() },
+    });
+    await startJob
+    await sendNotification(MESSAGES.MEMO_END, endAlarms).catch(catchAndLogError);
+  }
+}
+
+// Job to be run every hour
+cron.schedule('0 10 * * * *', async () => {
+  await collectionJob;
+  let italianHour = italianTime(new Date()).getHours();
+  if (isAlarmHour(italianHour)) await alarmSend(italianHour).catch(catchAndLogError);
+  else console.log("not checking alarm");
+  if (!COLLECTIONS.EXEC_TIME.has(italianHour)) await checkRunCollection();
+  await watchEvent().catch(catchAndLogError);
+});
+
+// Keep application running on Heroku
+if (IS_PRODUCTION && APP_URL) {
+  cron.schedule('0 */20 * * * *', () => {
+    let italianHour = italianTime(new Date()).getHours();
+    if (process.env.KEEP_UP || replier.isActive() || isAlarmHour(italianHour)) {
+      console.log(`Keep running: Request ${APP_URL} to avoid being put to sleep`);
+      axios.get(APP_URL).catch(
+        error => { console.log("Keep running: Error:", error); }
+      );
+    }
+  });
+}
 
 // BOT: START, ABOUT, AND STATUS COMMAND
 
@@ -261,7 +312,7 @@ bot.onText(/\/status/, (msg, match) => {
   Scraper.getLastCollection(true, true, true).then((results) => {
     let L = [results.last, results.successful, results.unempty];
     let optionsDate = { year: 'numeric', month: 'long', day: 'numeric' };
-    let optionsTime = { hour: 'numeric', minute: 'numeric'};
+    let optionsTime = { hour: 'numeric', minute: 'numeric' };
     let R = L.map((item) => Object({
       status: item.status,
       date: italianTime(item.date).toLocaleDateString('it-IT', optionsDate),
@@ -377,16 +428,23 @@ async function searchCallback(replyObj, action = "", ...params) {
       raw: true,
     }).catch(e => { console.error("Error looking for results", e); return [] })
     let promises = searchResults.rows.map(
-      (item) => {
-        let ref = replier.message(MESSAGES.EVENT, { id: chatID }, { event: item });
-        return replier.save(MESSAGES.EVENT, ref)
-      });
+      (item) => db.Alarm.count({
+        where: { warning: true, eventId: item.id },
+        include: [{ model: db.Reply, where: { chatID: chatID } }],
+        raw: true
+      }).then(
+        (hasAlarm) => replier.message(MESSAGES.EVENT, { id: chatID }, {
+          event: item,
+          hasAlarm: Boolean(hasAlarm),
+        })
+      ).then((ref) => replier.save(MESSAGES.EVENT, ref))
+    )
     let extra_data = Object(replyObj.data);
     extra_data.status = "end";
     promises.push(replyObj.update({ data: extra_data }));
     promises = promises.map(
       (p) => (p.then((r) => true, (e) => {
-        console.error("Error sending Search Results", response);
+        console.error("Error sending Search Results", e, e.response);
         return false
       }))
     );
@@ -531,7 +589,30 @@ bot.onText(/\/mostra[ _]*([0-9]*)/, oldWarning);
 // EVENT AND ALARM
 
 async function eventCallback(replyObj, action = "", ...params) {
-  return [false, "Funzione non ancora disponibile"];
+  if (action == 'alarm') {
+    let event = await db.BCEvent.findOne({ where: { bc: params[0] } });
+    if (!event) return [false, 'Trovato nessun evento richiesto'];
+    let alarms = await replyObj.getAlarms();
+    if (alarms.length > 2) return [false, 'Numero di promemoria errato'];
+    let alarm;
+    if (!alarms.length) {
+      alarm = db.Alarm.build({
+        warning: true,
+        replyId: replyObj.id,
+        eventId: event.id,
+      });
+    } else {
+      alarm = alarms[0];
+      if (alarm.eventId != event.id) return [false, 'Evento diverso dal messaggio'];
+      alarm.set('warning', !alarm.warning);
+    }
+    let r = await alarm.save().then(() => true, catchAndLogError)
+    replier.update(replyObj, { event: event, hasAlarm: alarm.warning });
+    let response = alarm.warning ? 'Promemoria attivi' : 'Promemoria disattivi';
+    if (r) return [true, response]
+    else return [true, 'Unknown']
+  }
+  return [false, "Azione non prevista"];
 }
 
 // CANCEL ACTIVE WATCHER OR ALARM
@@ -630,7 +711,7 @@ async function cancelCallback(replyObj, action = "", target = "") {
             `UPDATE alarms SET warning = false FROM alarms a INNER JOIN replies r ON a."replyId" = r."id" AND r."chat_id" = :chatID`,
             { replacements: { chatID: replyObj.chatID }, type: sequelize.QueryTypes.UPDATE },
           );
-          // TO DO: change watchers replies text
+          // TO DO: change events replies text
           await update().catch(catchAndLogError);
           return [true, "Promemoria disattivati"];
         }

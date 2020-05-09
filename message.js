@@ -6,7 +6,9 @@ const WARNING = 5;
 const ONFOUND = 10;
 const SEARCH = "S";
 const WATCH = "W";
-const MEMO = "M";
+const MEMO_SUB = 'M1';
+const MEMO_START = 'M2';
+const MEMO_END = 'M3';
 const EVENT = "E";
 const CANCEL = "C";
 const SHOW = 99;
@@ -19,7 +21,9 @@ const MESSAGES = {
     LOG: LOG,
     SEARCH: SEARCH,
     WATCH: WATCH,
-    MEMO: MEMO,
+    MEMO_SUB: MEMO_SUB,
+    MEMO_END: MEMO_END,
+    MEMO_START: MEMO_START,
     EVENT: EVENT,
     CANCEL: CANCEL,
     SHOW: SHOW,
@@ -30,7 +34,9 @@ const MESSAGES = {
     callBackSet: new Set([SEARCH, WATCH, EVENT, CANCEL]),
     withBetaAlertSet: new Set([WELCOME, WARNING, SEARCH, WATCH, CANCEL, ABOUT]),
     prioritySet: new Set([WELCOME, SEARCH, WATCH, CANCEL, WARNING]),
-    HTMLSet: new Set([WELCOME, STATUS, ABOUT, SEARCH, WATCH, EVENT, SHOW, CANCEL, ONFOUND, ABOUT, STATUS]),
+    HTMLSet: new Set([
+        WELCOME, STATUS, ABOUT, SEARCH, WATCH, EVENT, SHOW, CANCEL, ONFOUND, ABOUT, STATUS, MEMO_START, MEMO_SUB, MEMO_END,
+    ]),
 
 }
 

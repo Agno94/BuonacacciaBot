@@ -2,6 +2,7 @@ const { REGIONI, ZONES, CATEGORIES, BRANCHE } = require("./data.js");
 const { MESSAGES, SELECTION } = require("./message.js");
 
 const BClink = `<a href="https://buonacaccia.net/">BuonaCaccia</a>`;
+const dateOption = { year: 'numeric', month: 'long', day: 'numeric' };
 
 const TEMPLATES = {};
 
@@ -53,10 +54,10 @@ Tipologia ${BRANCHE[CATEGORIES[p.event.category].branca].emoji}${
 CATEGORIES[p.event.category].human} | Regione ${emoji}${REGIONI[p.event.regione].human}`;
     let body = `
 📍 Luogo: ${ p.event.location}
-✈️ Partenza: ${ new Date(p.event.startdate).toLocaleDateString('it-IT')}
-🏁 Ritorno: ${ new Date(p.event.enddate).toLocaleDateString('it-IT')}
-🔓 Apertura iscrizioni: ${ new Date(p.event.subscriptiondate).toLocaleDateString('it-IT')}
-🔒 Chiusura iscrizioni: ${ new Date(p.event.endsubscriptiondate).toLocaleDateString('it-IT')}
+✈️ Partenza: ${new Date(p.event.startdate).toLocaleDateString('it-IT')}
+🏁 Ritorno: ${new Date(p.event.enddate).toLocaleDateString('it-IT')}
+🔓 Apertura iscrizioni: ${new Date(p.event.subscriptiondate).toLocaleDateString('it-IT')}
+🔒 Chiusura iscrizioni: ${new Date(p.event.endsubscriptiondate).toLocaleDateString('it-IT')}
 💰️ Costo: ${ p.event.cost / 100} €`
     let alarm = `
 Promemoria relativi a questo eventi: ` + (p.hasAlarm ? `🔔 <i>Attivi</i>` : `🔕 <i>Disattivi</i>`)
@@ -157,7 +158,27 @@ Elenco degli eventi con promemoria attivo: ${createList(p.alarmEvents)}`
 TEMPLATES[MESSAGES.ONFOUND] = (p) => `
 👀📩 Notifiche di eventi in arrivo
 Ho trovato degli eventi ti interessano.
-Per vedere gli osservatori attivi ed eventualmente rimuoverli per non avere altre notifiche scrivimi <u>/annulla</u>.
-`
+Per vedere gli osservatori attivi ed eventualmente rimuoverli per non avere altre notifiche scrivimi <u>/annulla</u>.`
+
+MemoTitle = (p) => `
+🔔📩 Promomemoria per evento ${CATEGORIES.EMOJI(p.event.category)}${CATEGORIES[p.event.category].human} presso ${p.event.location}`
+
+MemoEnd = (p) => `
+Puoi disattivare i promemoria sul messaggio di descrizione dell'evento o tramite il comando <u>/annulla</u>`
+
+TEMPLATES[MESSAGES.MEMO_SUB] = (p) =>
+    MemoTitle(p) + `
+Le iscrizioni per questo evento apriranno ${p.day || 'il'} ${p.event.subscriptiondate.toLocaleDateString('it-IT', dateOption)} alle 9:00.
+` + MemoEnd(p)
+
+TEMPLATES[MESSAGES.MEMO_START] = (p) =>
+    MemoTitle(p) + `
+Questo evento inizierà ${p.day || 'il'} ${p.event.startdate.toLocaleDateString('it-IT', dateOption)}.
+` + MemoEnd(p)
+
+TEMPLATES[MESSAGES.MEMO_END] = (p) =>
+    MemoTitle(p) + `
+Questo evento terminerà ${p.day || 'il'} ${p.event.enddate.toLocaleDateString('it-IT', dateOption)}.
+` + MemoEnd(p)
 
 module.exports = { TEMPLATES }

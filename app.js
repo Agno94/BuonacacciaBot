@@ -231,15 +231,18 @@ function isAlarmHour(hour) {
 
 async function alarmSend(hour) {
   console.log("Checking for alarm and sending notification ... ");
-  const SUBSCRIPTION = 1;
-  const START = 2;
-  const END = 3;
   async function sendNotification(type, list) {
     console.log(list.map(e => e.dataValues));
-    for (const alarm of list) {
+    let refs = list.map((alarm) => {
       let chat = Session.chatInfo(alarm.reply.chatID) || { id: alarm.reply.chatID };
-      //SEND
-    }
+      let data = {
+        event: alarm.bc_event.dataValues,
+        day: (hour == MORNING_ALARM_TIME) ? 'oggi' : 'domani',
+        reply_to: alarm.reply.msgID,
+      }
+      return replier.message(type, chat, data);
+    })
+    for (const ref of refs) await replier.response(ref);
   }
   async function findActiveAlarm(condition) {
     return await db.Alarm.findAll({
@@ -248,31 +251,31 @@ async function alarmSend(hour) {
         model: db.BCEvent,
         where: condition,
       }, db.Reply,],
-      //groud by ???
     }).catch(catchAndLogError);
   }
   if (hour == MORNING_ALARM_TIME) {
     let alarms = await findActiveAlarm({ subscriptiondate: today() })
-    await sendNotification(SUBSCRIPTION, alarms).catch(catchAndLogError);
+    await sendNotification(MESSAGES.MEMO_SUB, alarms).catch(catchAndLogError);
   }
   if (hour == EVENING_ALARM_TIME) {
-    let tomorrow = new Date(today().getTime() + 24 * 3600 * 1000);
+    let tomorrow = new Date(today().getTime() + 48 * 3600 * 1000);
     let subscrAlarms = await findActiveAlarm({ subscriptiondate: tomorrow });
-    let subscrJob = sendNotification(SUBSCRIPTION, subscrAlarms).catch(catchAndLogError);
+    let subscrJob = sendNotification(MESSAGES.MEMO_SUB, subscrAlarms).catch(catchAndLogError);
     let startAlarms = await findActiveAlarm({ startdate: tomorrow });
     await subscrJob;
-    let startJob = sendNotification(START, startAlarms).catch(catchAndLogError);
+    let startJob = sendNotification(MESSAGES.MEMO_START, startAlarms).catch(catchAndLogError);
     let endAlarms = await findActiveAlarm({
       enddate: tomorrow,
       startdate: { [db.Op.lt]: today() },
     });
     await startJob
-    await sendNotification(END, endAlarms).catch(catchAndLogError);
+    await sendNotification(MESSAGES.MEMO_END, endAlarms).catch(catchAndLogError);
   }
 }
 
 // Job to be run every hour
 cron.schedule('0 10 * * * *', async () => {
+  await collectionJob;
   let italianHour = italianTime(new Date()).getHours();
   if (isAlarmHour(italianHour)) await alarmSend(italianHour).catch(catchAndLogError);
   else console.log("not checking alarm");
@@ -310,7 +313,7 @@ bot.onText(/\/status/, (msg, match) => {
   Scraper.getLastCollection(true, true, true).then((results) => {
     let L = [results.last, results.successful, results.unempty];
     let optionsDate = { year: 'numeric', month: 'long', day: 'numeric' };
-    let optionsTime = { hour: 'numeric', minute: 'numeric'};
+    let optionsTime = { hour: 'numeric', minute: 'numeric' };
     let R = L.map((item) => Object({
       status: item.status,
       date: italianTime(item.date).toLocaleDateString('it-IT', optionsDate),

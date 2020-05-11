@@ -312,6 +312,9 @@ class Replier {
         let tries = MAX_ATTEMPTS;
         let result = { ok: false };
         while (tries && !(result.ok)) {
+            if (!(message.option.reply_to_message_id) &&
+                message.reply_to_list && message.reply_to_list.length)
+                message.option.reply_to_message_id = message.reply_to_list.pop()
             try {
                 if (action == 'send') {
                     result = await this.bot.sendMessage(
@@ -374,7 +377,12 @@ class Replier {
                 chatID: response.chat.id,
                 data: extraData
             }).then(
-                obj => [obj, true]
+                obj => obj.createMessage({
+                    tgID: response.message_id
+                }).then(msgObj => {
+                    obj.messages = obj.messages || [msgObj];
+                    return [obj, true];
+                })
             ).catch((e) => [e, false])
             if (!ok) throw obj;
             return obj;

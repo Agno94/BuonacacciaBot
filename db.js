@@ -112,15 +112,12 @@ module.exports = function (sequelize, DateTypes) {
             allowNull: false,
             field: "chat_id"
         },
-        msgID: {
-            type: Sequelize.BIGINT,
-            allowNull: false,
-            field: "message_id",
-        },
         data: {
             type: Sequelize.JSONB,
         },
     }, {});
+
+    db.Watcher.belongsTo(db.Reply, {foreignKey: 'reply_id'});
 
     db.Alarm = sequelize.define('alarm', {
         warning: {
@@ -137,6 +134,17 @@ module.exports = function (sequelize, DateTypes) {
     db.BCEvent.hasMany(db.Alarm, { foreignKey: 'eventId' });
     db.Alarm.belongsTo(db.Reply, { onDelete: 'cascade' });
     db.Reply.hasMany(db.Alarm);
+
+    db.TGMessage = sequelize.define('message', {
+        tgID: {
+            type: Sequelize.BIGINT,
+            allowNull: false,
+            field: "telegram_id",
+            unique: true,
+        }
+    })
+    db.TGMessage.belongsTo(db.Reply, { onDelete: 'cascade' });
+    db.Reply.hasMany(db.TGMessage);
 
     return db
 

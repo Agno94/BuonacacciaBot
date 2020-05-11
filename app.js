@@ -237,7 +237,7 @@ async function alarmSend(hour) {
       let data = {
         event: alarm.bc_event.dataValues,
         day: (hour == MORNING_ALARM_TIME) ? 'oggi' : 'domani',
-        reply_to: alarm.reply.msgID,
+        reply_to_list: alarm.reply.messages.map(m => m.tgID),
       }
       return replier.message(type, chat, data);
     })
@@ -249,7 +249,10 @@ async function alarmSend(hour) {
       include: [{
         model: db.BCEvent,
         where: condition,
-      }, db.Reply,],
+      }, {
+        model: db.Reply,
+        include: [db.TGMessage]
+      },],
     }).catch(catchAndLogError);
   }
   if (hour == MORNING_ALARM_TIME) {
@@ -493,7 +496,7 @@ async function watcherProcess(selectionObj, chatID) {
     console.error("On watcher findOrCreate", result);
     throw Error(result);
   };
-  result.set('expiredate', new Date(today().getTime() + 2 * 365 * 24 * 3600 * 1000));
+  result.set('expiredate', new Date(today().getTime() + 10 * 365 * 24 * 3600 * 1000));
   selectionObj.status = "active";
   return [selectionObj, result];
 }
@@ -504,8 +507,8 @@ async function watchCallback(replyObj, action = "", ...params) {
     let selectionObj = parseSelection(...params);
     let [reply_data, watcher] = await watcherProcess(selectionObj, replyObj.chatID);
     if (watcher) {
-      replyObj.update({ data: { status: 'active', id: watcher.id } });
-      watcher.msgId = replyObj.msgID;
+      replyObj.update({ data: { status: 'active' } });
+      watcher.setReply(replyObj);
       await watcher.save()
     }
     replier.update(replyObj, reply_data);
@@ -519,7 +522,11 @@ async function watchCallback(replyObj, action = "", ...params) {
   }
   if (action == 'cancel') {
     if (replyObj.data.status != 'active') return [false, "Non c'è niente di attivo"];
-    let watcher = await db.Watcher.findByPk(replyObj.data.id).catch((e) => false);
+    let watcher = await db.Watcher.findAndCountAll({
+      where: { reply_id: replyObj.id }
+    }).then(
+      ({ rows, count }) => ((count == 1) && (rows[0]))
+    ).catch((e) => false);
     if (!watcher) return [false, "Nessun osservatore attivo associato"];
     let reply_data = {
       step: SELECTION.COMPLETE,
@@ -563,13 +570,9 @@ bot.onText(/\/osserva[ _]+([a-zA-Z0-9]+)[ _]*(.*)/, async (msg, match) => {
   watcherProcess(selectionObj, msg.chat.id).then(async ([reply_data, watcher]) => {
     let extra_data = { status: 'select' };
     let ref = replier.message(MESSAGES.WATCH, msg.chat, reply_data);
-    if (watcher) {
-      response = await replier.response(ref);
-      watcher.msgId = response.message_id;
-      extra_data = { status: 'active', id: watcher.id };
-      await watcher.save();
-    }
-    replier.save(MESSAGES.WATCH, ref, extra_data);
+    if (watcher) extra_data = { status: 'active' };
+    let replyObj = await replier.save(MESSAGES.WATCH, ref, extra_data);
+    if (watcher) watcher.setReply(replyObj);
   }).catch(catchAndLogError);
 });
 
@@ -671,14 +674,7 @@ async function cancelHandler(msg, match) {
   }
   cancelFindList(msg.chat.id).then(async (data) => {
     let ref = replier.message(MESSAGES.CANCEL, msg.chat, data);
-    let replyMsg = await replier.response(ref);
-    if (replyMsg.ok) {
-      db.Reply.create({
-        type: sequelize.CANCEL_REPLY,
-        chatID: msg.chat.id,
-        msgID: replyMsg.message_id,
-      });
-    } else throw Error(result);
+    await replier.save(MESSAGES.CANCEL, ref);
   }, (e) => {
     console.error("Error on \/annulla", e);
     sendError();
@@ -748,14 +744,17 @@ bot.on('callback_query', async (query) => {
   let callback_params = data.split("/").map(l => l.trim());//.filter(l => l);
   let type = callback_params[0];
   if (!MESSAGES.callBackSet.has(type)) return exitWithAlert("Invalid query");
-  let messages = await db.Reply.findAndCountAll({
-    where: {
-      chatID: chat.id,
-      msgID: message_id,
-    },
+  let replies = await db.Reply.findAndCountAll({
+    where: { chatID: chat.id },
+    include: [{
+      model: db.TGMessage,
+      where: { tgID: message_id },
+      attributes: ['tgID'],
+    }]
   });
-  if (messages.count != 1) return exitWithAlert(`${messages.count} replies`);
-  let replyObj = messages.rows[0];
+  if (replies.count != 1) return exitWithAlert(`${replies.count} replies`);
+  let replyObj = replies.rows[0];
+  replyObj.msgID = message_id;
   if (type != replyObj.type) return exitWithAlert(`Mismatching types`);
   let status, text;
   let callbackHandler = null;

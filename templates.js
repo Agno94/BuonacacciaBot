@@ -3,6 +3,7 @@ const { MESSAGES, SELECTION } = require("./message.js");
 
 const BClink = `<a href="https://buonacaccia.net/">BuonaCaccia</a>`;
 const dateOption = { year: 'numeric', month: 'long', day: 'numeric' };
+const dateFormat = (date) => (new Date(date)).toLocaleDateString('it-IT', dateOption);
 
 const TEMPLATES = {};
 
@@ -12,10 +13,10 @@ TEMPLATES.BetaAlert = `
 TEMPLATES[MESSAGES.WELCOME] = (p) => `
 Ciao,
 Il mio obiettivo è aiutare capi e ragazzi scout ad avere a che fare con ${BClink}
-Non sono ancora completo. Prova a usare una di queste due funzioni già disponibili:
+Prova a usare una di queste due funzioni già disponibili:
 🔸 <u>/cerca</u> - Posso cercare eventi tra quelli presenti su buonacaccia l'ultima volta che ho visitato il sito
 🔸 <u>/osserva</u> - Posso avvisarti quando compare su buonacaccia un evento che ti interessa
-I promemoria per le iscrizione agli eventi non sono ancora disponibili.
+🔸 Promemoria - Posso avvistarti quando stanno per aprire le iscrizioni ad un evento e quando sta per iniziare.
 Scrivi <u>/about</u> per sapere di più su di me.`
 
 TEMPLATES[MESSAGES.ABOUT] = (p) => `
@@ -29,14 +30,16 @@ suggerimenti tramite <a href="https://github.com/Agno94/BuonacacciaBot/issues">q
 Sono sviluppato da un capo veneto e non sono legato a chi cura BuonaCaccia.
 Funziono in questo modo: più volte al giorno visito Buonacaccia, analizzo la lista di eventi, salvo i nuovi elementi nella mia memoria.
 
-Funzioni attualmente <b>NON</b> disponibili ma che potrei avere in futuro:
-🔸 Promemoria di apertura delle iscrizioni ad un evento
-
 Funzioni e comandi ora disponibili:
 🔸 <u>/cerca</u> - 🔎 Per cercare eventi tra quelli presenti su buonacaccia l'ultima volta che ho visitato il sito;
 🔸 <u>/osserva</u> - 👀 Per farti avvisarti quando compare su buonacaccia un evento che ti interessa;
+🔸 🔔 Promemoria di apertura delle iscrizioni ad un evento
 🔸 <u>/annula</u> - 🗑 Per elencare e scegliere se annullare le notifiche attive;
 🔸 <u>/status</u> - 📋 Per conoscere l'ultima volta che ho visitato buonacaccia;
+
+Problemi <b>NON</b> ancora risolti:
+🔸 Alcune date potrebbero essere scritte in inglese
+🔸 Non aggiorno i dettagli degli eventi nella mia memoria quindi se un evento dovesse essere posticipato o annullato potrei darti informazioni sbagliate
 `
 
 TEMPLATES[MESSAGES.STATUS] = (p) => `
@@ -51,13 +54,13 @@ TEMPLATES[MESSAGES.EVENT] = (p) => {
     let title = `
 <i>Evento</i>: <b>${p.event.title}</b>
 Tipologia ${BRANCHE[CATEGORIES[p.event.category].branca].emoji}${
-CATEGORIES[p.event.category].human} | Regione ${emoji}${REGIONI[p.event.regione].human}`;
+        CATEGORIES[p.event.category].human} | Regione ${emoji}${REGIONI[p.event.regione].human}`;
     let body = `
 📍 Luogo: ${ p.event.location}
-✈️ Partenza: ${new Date(p.event.startdate).toLocaleDateString('it-IT')}
-🏁 Ritorno: ${new Date(p.event.enddate).toLocaleDateString('it-IT')}
-🔓 Apertura iscrizioni: ${new Date(p.event.subscriptiondate).toLocaleDateString('it-IT')}
-🔒 Chiusura iscrizioni: ${new Date(p.event.endsubscriptiondate).toLocaleDateString('it-IT')}
+✈️ Partenza: ${dateFormat(p.event.startdate)}
+🏁 Ritorno: ${dateFormat(p.event.enddate)}
+🔓 Apertura iscrizioni: ${dateFormat(p.event.subscriptiondate)}
+🔒 Chiusura iscrizioni: ${dateFormat(p.event.endsubscriptiondate)}
 💰️ Costo: ${ p.event.cost / 100} €`
     let alarm = `
 Promemoria relativi a questo eventi: ` + (p.hasAlarm ? `🔔 <i>Attivi</i>` : `🔕 <i>Disattivi</i>`)
@@ -172,17 +175,17 @@ Puoi disattivare i promemoria sul messaggio di descrizione dell'evento o tramite
 
 TEMPLATES[MESSAGES.MEMO_SUB] = (p) =>
     MemoTitle(p) + `
-Le iscrizioni per questo evento apriranno ${p.day || 'il'} ${p.event.subscriptiondate.toLocaleDateString('it-IT', dateOption)} alle 9:00.
+Le iscrizioni per questo evento apriranno ${p.day || 'il'} ${dateFormat(p.event.subscriptiondate)} alle 9:00.
 ` + MemoEnd(p)
 
 TEMPLATES[MESSAGES.MEMO_START] = (p) =>
     MemoTitle(p) + `
-Questo evento inizierà ${p.day || 'il'} ${p.event.startdate.toLocaleDateString('it-IT', dateOption)}.
+Questo evento inizierà ${p.day || 'il'} ${dateFormat(p.event.startdate)}.
 ` + MemoEnd(p)
 
 TEMPLATES[MESSAGES.MEMO_END] = (p) =>
     MemoTitle(p) + `
-Questo evento terminerà ${p.day || 'il'} ${p.event.enddate.toLocaleDateString('it-IT', dateOption)}.
+Questo evento terminerà ${p.day || 'il'} ${dateFormat(p.event.enddate)}.
 ` + MemoEnd(p)
 
 module.exports = { TEMPLATES }

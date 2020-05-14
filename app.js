@@ -293,7 +293,7 @@ async function alarmSend(hour) {
     await sendNotification(MESSAGES.MEMO_SUB, alarms).catch(catchAndLogError);
   }
   if (hour == EVENING_ALARM_TIME) {
-    let tomorrow = new Date(today().getTime() + 48 * 3600 * 1000);
+    let tomorrow = new Date(today().getTime() + 24 * 3600 * 1000);
     let subscrAlarms = await findActiveAlarm({ subscriptiondate: tomorrow });
     let subscrJob = sendNotification(MESSAGES.MEMO_SUB, subscrAlarms).catch(catchAndLogError);
     let startAlarms = await findActiveAlarm({ startdate: tomorrow });

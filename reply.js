@@ -2,14 +2,14 @@
 Parameters can be changed by settings env. var.
 Defatul are set by reading:
 https://core.telegram.org/bots/faq#my-bot-is-hitting-limits-how-do-i-avoid-this
-MAX_FIND_RESULTS = max number of result that can be send together
-MAX_CHAT_MSG = max number of messages that can be send to a chat in 7 seconds
-MAX_NONPRIVATE_MSG = max number of messages that can be send to a group in 7 seconds
+MAX_CHAT_MSG = max number of messages that can be send to a chat in RESET_DELAY seconds
+MAX_NONPRIVATE_MSG = max number of messages that can be send to a group in RESET_DELAY seconds
 MAX_SECOND_MSG = max number of messages that can be send globaly in 1 seconds
 */
 const MAX_CHAT_MSG = process.env.MAX_CHAT_MSG || 6;
-const MAX_NONPRIVATE_MSG = process.env.MAX_NONPRIVATE_MSG || 2;
-const MAX_SECOND_MSG = process.env.MAX_GROUP_MSG || 30;
+const MAX_NONPRIVATE_MSG = process.env.MAX_NONPRIVATE_MSG || 3;
+const MAX_SECOND_MSG = process.env.MAX_SECOND_MSG || 30;
+const RESET_DELAY = (process.env.RESET_DELAY || 9) * 1000;
 const MAX_ATTEMPTS = 3;
 
 const { MESSAGES, SELECTION } = require("./message.js");
@@ -61,6 +61,10 @@ function selectionKeyboard(type, step, data) {
     return keyboard
 }
 
+const TOP = -1;
+const HIGH = 0;
+const NORMAL = 1;
+
 class Replier {
 
     constructor(bot, db, Session) {
@@ -73,15 +77,16 @@ class Replier {
         this.isSending = false;
         this.sendActionTime = {};
         this.queue = {
-            top: [],
-            normal: [],
+            [TOP]: [],
+            [HIGH]: [],
+            [NORMAL]: [],
         };
         this.ref = 0;
         this.responses = {};
     }
 
     isActive() {
-        return (this.isSending || this.queue.top.length || this.queue.normal.length);
+        return (this.isSending || this._queueCount(TOP));
     }
 
     createMessage(type, chat, data) {
@@ -178,15 +183,27 @@ class Replier {
                 if (data.step < SELECTION.COMPLETE) {
                     keyboard = selectionKeyboard(MESSAGES.WATCH, data.step, data);
                 } else {
-                    keyboard = [[{
-                        text: '🚀 Nuovo osservatore',
-                        callback_data: `${MESSAGES.WATCH}/new/`
-                    }]];
+                    if (!data.status) {
+                        keyboard = selectionKeyboard(MESSAGES.WATCH, data.step, data);
+                        keyboard[0].push({
+                            callback_data: SELECTION.callbackData(MESSAGES.WATCH),
+                            text: `🚀️ Ricomincia`,
+                        });
+                        keyboard.unshift([{
+                            text: '🔔 Attiva osservatore',
+                            callback_data: `${MESSAGES.WATCH}/create/`,
+                        }])
+                    }
+                    if (data.status == 'cancelled')
+                        keyboard = [[{
+                            text: '🚀 Nuovo osservatore',
+                            callback_data: `${MESSAGES.WATCH}/new/`
+                        }]];
                     if (data.status == 'active') {
-                        keyboard[0].unshift({
+                        keyboard = [[{
                             text: '🗑 Elimina Osservatore',
                             callback_data: `${MESSAGES.WATCH}/cancel/`,
-                        });
+                        }]];
                     }
                 }
             default:
@@ -203,81 +220,91 @@ class Replier {
         return msg
     }
 
+    _stepQueue(chatID) {
+        this.chatQueued[chatID] = (this.chatQueued[chatID] || 0) + 1;
+    }
+
     update(replyObj, data) {
         let message = this.createMessage(replyObj.type, { id: replyObj.chatID }, data);
-        if (!this._isSendable(replyObj.chatID)) {
-            console.log("i should wait");
-        }
-        this.globalCounter += 1;
-        this.chatCounter[replyObj.chatID] += 1;
+        message.deliverAction = 'edit';
         message.option.chat_id = replyObj.chatID;
-        message.option.message_id = replyObj.msgID;
-        this._deliverMessage(message, "update").then(
-            this._onFinish(replyObj.chatID)
-        ).catch(
-            (e) => { console.error(e) }
-        )
-        // TO DO: implement queue
-        // TO DO: handle error
+        if (replyObj.msgID) {
+            this._stepQueue(replyObj.chatID)
+            let this_message = Object.assign({}, message);
+            this_message.option.message_id = replyObj.msgID;
+            this.queue[TOP].push(this_message);
+        };
+        replyObj.getMessages({ raw: true }).then(
+            messages => messages.map(
+                msg => {
+                    if (msg.tgID == replyObj.msgID) return;
+                    this._stepQueue(replyObj.chatID);
+                    let this_message = Object.assign({}, message);
+                    this_message.option = Object.assign({}, message.option);
+                    this_message.option.message_id = msg.tgID;
+                    this.queue[HIGH].push(this_message);
+                }
+            )
+        ).catch(console.error).then(this._loop.bind(this));
+        this._loop();
     }
 
     message(type, chat, data) {
         let message = this.createMessage(type, chat, data);
-        let priority = MESSAGES.prioritySet.has(type);
+        let priority = MESSAGES.prioritySet.has(type) ? HIGH : NORMAL;
         this.ref += 1;
         message.ref = this.ref;
-        if (priority) this.queue.top.push(message)
-        else this.queue.normal.push(message);
-        this.chatQueued[chat.id] = (this.chatQueued[chat.id] || 0) + 1;
+        this.queue[priority].push(message);
+        this._stepQueue(chat.id);
         // ...
         if (!this.isSending) this._loop();
         return message.ref;
     }
 
+    _queueCount(maxPriority) {
+        let count = 0
+        for (let P = maxPriority; P <= NORMAL; P += 1) count += this.queue[P].length;
+        return count;
+    }
+
     async _loop() {
         this.isSending = true;
-        while (this.queue.top.length + this.queue.normal.length) {
+        while (this._queueCount(TOP)) {
+            let activePriority = TOP;
             let time = new Date();
             let sent = 0;
-            let priorityPresent = Boolean(this.queue.top.length);
             let postponed = [];
             while (
-                ((this.globalCounter) < MAX_SECOND_MSG) &&
-                ((this.queue.top.length && priorityPresent) || this.queue.normal.length)
+                (this.globalCounter < MAX_SECOND_MSG) &&
+                (this._queueCount(activePriority))
             ) {
-                let message = priorityPresent ?
-                    this.queue.top.shift() :
-                    this.queue.normal.shift();
-                if (this._isSendable(message.chat.id)) {
-                    this._deliverMessage(message).then(
-                        (r) => r
-                        // this._doSaveReply(message.type, message.ref)
-                        // on success
-                    ).catch(
-                        (e) => Object({ ok: false, error: e })
-                        // on error
-                    ).then(
-                        this._onFinish(message.chat.id, message.ref)
-                    );
-                    sent += 1;
-                    this.chatCounter[message.chat.id] += 1;
-                    this.chatQueued[message.chat.id] -= 1;
-                    this.globalCounter += 1;
-                    await wait(5);
-                } else {
-                    postponed.push(message);
-                }
-                if (priorityPresent && !(this.queue.top.length)) {
-                    priorityPresent = false;
-                    this.queue.top = postponed;
+                if (!this.queue[activePriority].length) {
+                    this.queue[activePriority] = postponed;
+                    activePriority += 1;
                     postponed = [];
+                } else {
+                    let message = this.queue[activePriority].shift();
+                    if (this._isSendable(message.chat.id)) {
+                        let action = message.deliverAction || "send";
+                        this._deliverMessage(message, action).then(
+                            (r) => r
+                            // this._doSaveReply(message.type, message.ref)
+                            // on success
+                        ).catch(
+                            (e) => Object({ ok: false, error: e })
+                            // on error
+                        ).then(
+                            this._onFinish(message.chat.id, message.ref)
+                        );
+                        sent += 1;
+                        this.chatCounter[message.chat.id] += 1;
+                        this.chatQueued[message.chat.id] -= 1;
+                        this.globalCounter += 1;
+                        await wait(5);
+                    } else postponed.push(message);
                 }
             }
-            if (priorityPresent) {
-                this.queue.top = postponed.concat(this.queue.top);
-            } else {
-                this.queue.normal = postponed.concat(this.queue.normal);
-            }
+            this.queue[activePriority] = postponed.concat(this.queue[activePriority]);
             for (let chatID in this.chatQueued) {
                 if (!this.chatQueued[chatID]) delete this.chatQueued[chatID]
                 else {
@@ -296,7 +323,6 @@ class Replier {
     async response(ref) {
         while (!this.responses[ref]) await wait(100);
         let response = this.responses[ref];
-        //delete this.responses[ref];
         return response
     }
 
@@ -321,7 +347,7 @@ class Replier {
                         message.chat.id,
                         message.text,
                         message.option);
-                } else if (action == 'update') {
+                } else if (action == 'edit') {
                     result = await this.bot.editMessageText(
                         message.text,
                         message.option);
@@ -364,8 +390,22 @@ class Replier {
             }, 1000);
             setTimeout(() => {
                 this.chatCounter[chatID] -= 1;
-            }, 7000);
+            }, RESET_DELAY);
         }).bind(this)
+    }
+
+    async add(obj, ref) {
+        let response = await this.response(ref);
+        if (response && response.chat && response.message_id) {
+            await obj.createMessage({
+                tgID: response.message_id
+            }).then(msgObj => {
+                obj.messages = obj.messages || [msgObj];
+                return [obj, true];
+            })
+        } else {
+            throw response;
+        }
     }
 
     async save(type, ref, extraData = null) {
@@ -373,7 +413,6 @@ class Replier {
         if (response && response.chat && response.message_id) {
             let [obj, ok] = await this.Reply.create({
                 type: type,
-                msgID: response.message_id,
                 chatID: response.chat.id,
                 data: extraData
             }).then(

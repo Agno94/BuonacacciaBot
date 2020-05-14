@@ -119,18 +119,22 @@ Per vederli scrivimi <u>/mostra</u>. Oppure scrivi <u>/mostra 5</u> per vedere i
 
 
 TEMPLATES[MESSAGES.WATCH] = (p) => {
-    msg = `
+    if (p.status == 'cancelled') return `
+👀 Osservatore di eventi 
+
+❌🔕 Osservatore eliminato e disattivo`
+    let msg = `
 👀 Osservatore di eventi ${SELECTION_STATUS[p.step](p)}
 
 Con questa funzione per farmi controllare degli eventi presenti su ${BClink}. Mi ricorderò che ti interessano di eventi del tipo selezionato e ti invierò in messaggio quando trovo nuovi eventi sul sito. Se invece ti interessa sapere gli eventi presenti ora usa <u>\/cerca</u>.
 ${SELECTION_HELP[p.step]}`
     if (p.step == SELECTION.COMPLETE) {
+        if (!p.status) msg += `
+Selezione delle opzioni terminata, se clicchi sotto attiverò l'osservatore`
         if (p.status == 'active') msg += `
 ✔️🔔 Osservatore creato ed attivo.
 
-Quando non vuoi più ricevere avvisi usa il testo sotto o scrivimi <u>/annulla</u>`
-        if (p.status == 'cancelled') msg += `
-❌🔕 Osservatore eliminato e disattivo`
+Quando non vuoi più ricevere avvisi clicca sul tasto sotto o scrivimi <u>/annulla</u>`
         if (p.status == 'expired') msg += `
 ⌛️🔕 Osservatore disattivo in quanto scaduto`
     }

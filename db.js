@@ -118,6 +118,7 @@ module.exports = function (sequelize, DateTypes) {
     }, {});
 
     db.Watcher.belongsTo(db.Reply, {foreignKey: 'reply_id'});
+    db.Reply.hasOne(db.Watcher, {foreignKey: 'reply_id'});
 
     db.Alarm = sequelize.define('alarm', {
         warning: {

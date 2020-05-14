@@ -156,6 +156,49 @@ let collectionJob = startJobBot.then(async () => {
   await startJobDB;
 }).then(checkRunCollection)
 
+async function sendEventList(events = [], chats = [], option = (c) => { }) {
+  let promises = [];
+  console.log(events, chats);
+  for (const event of events)
+    for (const chatID of chats) 
+      promises.push({
+        ref: db.Alarm.count({
+          where: { warning: true, eventId: event.id },
+          include: [{ model: db.Reply, where: { chatID: chatID }, attributes: [] }],
+          raw: true
+        }).then(
+          (hasAlarm) => replier.message(
+            MESSAGES.EVENT,
+            { id: chatID },
+            Object.assign({
+              event: event.dataValues || event,
+              hasAlarm: Boolean(hasAlarm),
+            }, option(chatID))
+          )
+        ),
+        reply: db.Reply.findOne({
+          where: {
+            type: MESSAGES.EVENT,
+            data: { id: event.id },
+            chatID: chatID
+          }
+        }).catch(console.error),
+      });
+  promises = promises.map(
+    (job) => job.ref.then(async (ref) => {
+      let reply = await job.reply
+      if (!reply) await replier.save(MESSAGES.EVENT, ref, { id: event.id });
+      else await replier.add(reply, ref);
+    }).then((r) => true, (e) => {
+      console.error("Error sending events' list", e.response || e);
+      return false
+    })
+  );
+  for (const p of promises) if (!(await p)) throw false;
+  // if (!promises.every(async (p) => (await p))) throw false;
+  return true;
+}
+
 async function watchEvent() {
   console.log("Looking for unwatched events");
   let foundNotificationMessages = {};
@@ -198,24 +241,14 @@ async function watchEvent() {
       if (r.chat) foundNotificationMessages[r.chat.id] = r.message_id;
     }
     for (const event of events) {
-      let refs = watchers.map(
-        (w) => event.countAlarms({
-          where: { warning: true },
-          include: [{ model: db.Reply, where: { chatID: w.chatID }, attributes: [] }],
-          raw: true
-        }).then((hasAlarm) => replier.message(MESSAGES.EVENT, { id: w.chatID }, {
-          event: event.dataValues,
-          reply_to: foundNotificationMessages[w.chatID],
-          hasAlarm: Boolean(hasAlarm),
-        }))
-      )
+      let job = sendEventList(
+        [event],
+        watchers.map(w => w.chatID),
+        (chatID) => Object({ reply_to: foundNotificationMessages[chatID] }),
+      );
       await wait(100);
-      for (const ref of refs) await replier.response(ref);
-      db.BCEvent.update({
-        hasBeenWatched: true,
-      }, {
-        where: { bc: event.bc }
-      }).catch(catchAndLogError);
+      if (!(await job)) console.error(`Error sending event for ${params}`);
+      event.update({ hasBeenWatched: true, }).catch(catchAndLogError);
     }
   }
 }
@@ -301,17 +334,14 @@ if (IS_PRODUCTION && APP_URL) {
 // BOT: START, ABOUT, AND STATUS COMMAND
 
 bot.onText(/\/start/, (msg, match) => {
-  console.log("\/started by", msg.chat.id);
   replier.message(MESSAGES.WELCOME, msg.chat, {});
 });
 
 bot.onText(/\/about/, (msg, match) => {
-  console.log("\/about to", msg.chat.id);
   replier.message(MESSAGES.ABOUT, msg.chat, {});
 });
 
 bot.onText(/\/status/, (msg, match) => {
-  console.log("\/about to", msg.chat.id);
   Scraper.getLastCollection(true, true, true).then((results) => {
     let L = [results.last, results.successful, results.unempty];
     let optionsDate = { year: 'numeric', month: 'long', day: 'numeric' };
@@ -389,7 +419,7 @@ async function searchProcess(selectionObj) {
     }
   }).catch(e => {
     console.log("Search failed");
-    console.log(e);
+    console.error(e);
     return -1;
   });
   reply_data = {
@@ -430,35 +460,17 @@ async function searchCallback(replyObj, action = "", ...params) {
       },
       raw: true,
     }).catch(e => { console.error("Error looking for results", e); return [] })
-    let promises = searchResults.rows.map(
-      (item) => db.Alarm.count({
-        where: { warning: true, eventId: item.id },
-        include: [{ model: db.Reply, where: { chatID: chatID } }],
-        raw: true
-      }).then(
-        (hasAlarm) => replier.message(MESSAGES.EVENT, { id: chatID }, {
-          event: item,
-          hasAlarm: Boolean(hasAlarm),
-        })
-      ).then((ref) => replier.save(MESSAGES.EVENT, ref))
-    )
-    let extra_data = Object(replyObj.data);
+    let sendPromise = sendEventList(searchResults.rows, [chatID]);
+    await wait(100);
+    let extra_data = Object.assign({}, replyObj.data);
     extra_data.status = "end";
-    promises.push(replyObj.update({ data: extra_data }));
-    promises = promises.map(
-      (p) => (p.then((r) => true, (e) => {
-        console.error("Error sending Search Results", e, e.response);
-        return false
-      }))
-    );
-    let reply_data = Object(extra_data);
+    let reply_data = Object.assign({}, extra_data);
     reply_data.step = SELECTION.COMPLETE;
     reply_data.count = searchResults.count;
+    replyObj.update({ data: extra_data }).catch(console.error);
     replier.update(replyObj, reply_data);
-    if (!promises.every(async (p) => (await p))) {
-      return [false, "Errore nell'invio dei messaggi"];
-    }
-    return [true, "Risultati inviati"]
+    if (await sendPromise) return [true, "Risultati inviati"]
+    else return [false, "Errore nell'invio dei messaggi"];
   }
   if (action == "repeat") {
     if (replyObj.data.status != "end") return [false, "Ricerca non terminata"];
@@ -496,23 +508,55 @@ async function watcherProcess(selectionObj, chatID) {
     console.error("On watcher findOrCreate", result);
     throw Error(result);
   };
+  const activeData = { status: 'active' };
+  let reply = await result.getReply().then(
+    r => r || result.createReply({
+      chatID: chatID,
+      type: MESSAGES.WATCH,
+      data: activeData,
+    })
+  ).catch((e) => {
+    console.error("On watcher getReply", e);
+    return false
+  });
+  if (!reply) throw Error(reply);
   result.set('expiredate', new Date(today().getTime() + 10 * 365 * 24 * 3600 * 1000));
-  selectionObj.status = "active";
-  return [selectionObj, result];
+  result.save();
+  Object.assign(selectionObj, activeData);
+  if (reply.data.status != 'active') {
+    reply.update({ data: activeData });
+    replier.update(reply, selectionObj);
+  }
+  let ref = replier.message(MESSAGES.WATCH, Session.chatInfo() || { id: chatID }, selectionObj);
+  replier.add(reply, ref);
+  return [false, result];
+}
+
+async function cancelWatcher(watcher, reply) {
+  let reply_data = {
+    step: SELECTION.COMPLETE,
+    status: "cancelled",
+  }
+  await reply.update({ data: { status: 'cancelled' } });
+  replier.update(reply, reply_data);
 }
 
 async function watchCallback(replyObj, action = "", ...params) {
   if (action == "select") {
     if (replyObj.data.status != 'select') return [false, "Osservatore completo"];
     let selectionObj = parseSelection(...params);
+    replier.update(replyObj, selectionObj);
+    if (selectionObj.step == SELECTION.COMPLETE) {
+      replyObj.update({ data: { status: 'select', params: params } });
+      return [true, 'Pronto per essere attivato']
+    } else return [true, 'Scegli e clicca']
+
+  }
+  if (action == 'create') {
+    if (replyObj.data.status != 'select') return [false, "Osservatore completo"];
+    let selectionObj = parseSelection(...replyObj.data.params);
     let [reply_data, watcher] = await watcherProcess(selectionObj, replyObj.chatID);
-    if (watcher) {
-      replyObj.update({ data: { status: 'active' } });
-      watcher.setReply(replyObj);
-      await watcher.save()
-    }
-    replier.update(replyObj, reply_data);
-    if (!watcher) return [true, 'Scegli e clicca'];
+    if (!watcher) return [false, 'Osservatore NON creato'];
     return [true, 'Creato']
   }
   if (action == "new") {
@@ -528,17 +572,12 @@ async function watchCallback(replyObj, action = "", ...params) {
       ({ rows, count }) => ((count == 1) && (rows[0]))
     ).catch((e) => false);
     if (!watcher) return [false, "Nessun osservatore attivo associato"];
-    let reply_data = {
-      step: SELECTION.COMPLETE,
-      cat: watcher.category,
-      reg: watcher.regione,
-      status: "cancelled",
-    }
-    await watcher.destroy().catch(e => e).then(r => console.log(r));
-    replyObj.update({ data: { status: 'cancelled' } });
+    cancelWatcher(watcher, replyObj);
+    await watcher.destroy().then(console.log, console.error);
     replier.update(replyObj, reply_data);
-    return [false, "Non implementato"];
+    return [true, 'Eliminato'];
   }
+  return [false, 'Azione non prevista']
 }
 
 // BOT: SET UP SEARCH AND WATCH FUNCTION
@@ -568,11 +607,11 @@ bot.onText(/\/osserva[ _]+([a-zA-Z0-9]+)[ _]*(.*)/, async (msg, match) => {
   let r = match[2].trim().replace(/[_ 'x]/g, "").toLowerCase();
   let selectionObj = parseSelection('', c, '', r);
   watcherProcess(selectionObj, msg.chat.id).then(async ([reply_data, watcher]) => {
-    let extra_data = { status: 'select' };
-    let ref = replier.message(MESSAGES.WATCH, msg.chat, reply_data);
-    if (watcher) extra_data = { status: 'active' };
-    let replyObj = await replier.save(MESSAGES.WATCH, ref, extra_data);
-    if (watcher) watcher.setReply(replyObj);
+    if (!watcher) {
+      let extra_data = { status: 'select' };
+      let ref = replier.message(MESSAGES.WATCH, msg.chat, reply_data);
+      await replier.save(MESSAGES.WATCH, ref, extra_data);
+    }
   }).catch(catchAndLogError);
 });
 
@@ -670,7 +709,7 @@ async function cancelHandler(msg, match) {
       if (single) return;
     }
   } catch (e) {
-    console.log("Error on \/anulla, old part", e);
+    console.error("Error on \/anulla, old part", e);
   }
   cancelFindList(msg.chat.id).then(async (data) => {
     let ref = replier.message(MESSAGES.CANCEL, msg.chat, data);
@@ -692,10 +731,19 @@ async function cancelCallback(replyObj, action = "", target = "") {
     switch (action) {
       case ("del"):
         if (target == "watch") {
+          let replyList = await db.Reply.findAll({
+            where: { type: MESSAGES.WATCH },
+            include: [{
+              model: db.Watcher,
+              where: { chatID: replyObj.chatID }
+            }]
+          });
           await db.Watcher.destroy({
             where: { chatID: replyObj.chatID },
           }).catch(catchAndLogError);
-          // TO DO: change watchers replies text
+          replyList.map(
+            reply => cancelWatcher(reply.watcher, reply)
+          );
           await update().catch(catchAndLogError);
           return [true, "Osservatori Eliminati"];
         } else if (target == "alarm") {
@@ -703,11 +751,24 @@ async function cancelCallback(replyObj, action = "", target = "") {
           // { warning: false },
           // { include: [{ model: Reply, where: { chatID: chatID }, }] }
           // );
+          let replyList = await db.Reply.findAll({
+            where: {
+              type: MESSAGES.EVENT,
+              chatID: replyObj.chatID,
+            }, include: [{
+              model: db.Alarm,
+              where: { warning: true },
+              attributes: []
+            }]
+          })
           await sequelize.query(
             `UPDATE alarms SET warning = false FROM alarms a INNER JOIN replies r ON a."replyId" = r."id" AND r."chat_id" = :chatID`,
             { replacements: { chatID: replyObj.chatID }, type: sequelize.QueryTypes.UPDATE },
           );
-          // TO DO: change events replies text
+          replyList.map(async (reply) => {
+            let event = await db.BCEvent.findByPk(reply.data.id);
+            replier.update(reply, { event: event, hasAlarm: false });
+          });
           await update().catch(catchAndLogError);
           return [true, "Promemoria disattivati"];
         }

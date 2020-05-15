@@ -160,7 +160,7 @@ async function sendEventList(events = [], chats = [], option = (c) => { }) {
   let promises = [];
   console.log(events, chats);
   for (const event of events)
-    for (const chatID of chats) 
+    for (const chatID of chats)
       promises.push({
         ref: db.Alarm.count({
           where: { warning: true, eventId: event.id },
@@ -527,7 +527,7 @@ async function watcherProcess(selectionObj, chatID) {
     reply.update({ data: activeData });
     replier.update(reply, selectionObj);
   }
-  let ref = replier.message(MESSAGES.WATCH, Session.chatInfo() || { id: chatID }, selectionObj);
+  let ref = replier.message(MESSAGES.WATCH, Session.chatInfo(chatID) || { id: chatID }, selectionObj);
   replier.add(reply, ref);
   return [false, result];
 }
@@ -680,6 +680,7 @@ async function cancelFindList(chatID, searchWatchers = true, searchAlarms = true
           where: { chatID: chatID },
         }]
       }],
+      where: { enddate: { [db.Op.gte]: today() } },
       attributes: ['category', 'regione', 'location'],
     }).then((r) => r.map(
       (e) => `${CATEGORIES.EMOJI(e.category)}${CATEGORIES[e.category].human} presso ${e.location}(${REGIONI[e.regione].human})`
@@ -749,7 +750,7 @@ async function cancelCallback(replyObj, action = "", target = "") {
         } else if (target == "alarm") {
           // await Alarm.update(
           // { warning: false },
-          // { include: [{ model: Reply, where: { chatID: chatID }, }] }
+          // { include: [{ model: db.Reply, where: { chatID: chatID }, }] }
           // );
           let replyList = await db.Reply.findAll({
             where: {
@@ -774,6 +775,45 @@ async function cancelCallback(replyObj, action = "", target = "") {
         }
         break;
       case ("show"):
+        let chatInfo = Session.chatInfo(replyObj.chatID) || { id: replyObj.chatID };
+        if (target == 'watch') {
+          let watchers = await db.Watcher.findAll({
+            where: { chatID: replyObj.chatID },
+            include: [db.Reply]
+          }).catch(console.error);
+          if (!watchers) return [false, 'A database error'];
+          let promises = watchers.map((w) => {
+            let ref = replier.message(
+              MESSAGES.WATCH,
+              chatInfo, {
+              step: SELECTION.COMPLETE,
+              status: (w.expiredate > new Date()) ? 'active' : 'expired',
+              cat: w.category,
+              reg: w.regione,
+            });
+            return replier.add(w.reply, ref);
+          });
+          for (const p of promises) await p;
+          return [true, 'Messaggi inviati'];
+        } else if (target == 'alarm') {
+          let alarms = await db.Alarm.findAll({
+            where: { warning: true },
+            include: [
+              { model: db.BCEvent, where: { enddate: { [db.Op.gte]: today() } } },
+              { model: db.Reply, where: { chatID: replyObj.chatID } },
+            ],
+          }).catch(console.error);;
+          if (!alarms) return [false, 'A database error'];
+          let promises = alarms.map((a) => {
+            let ref = replier.message(MESSAGES.EVENT, chatInfo, {
+              event: a.bc_event.dataValues,
+              hasAlarm: true,
+            });
+            return replier.add(a.reply, ref);
+          });
+          for (const p of promises) await p;
+          return [true, 'Messaggi inviati'];
+        }
         return [false, "Non ancora implemantato"];
         break;
       case ("update"):

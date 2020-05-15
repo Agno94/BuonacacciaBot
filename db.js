@@ -78,10 +78,6 @@ module.exports = function (sequelize, DateTypes) {
             allowNull: false,
             field: "chat_id"
         },
-        msgID: {
-            type: Sequelize.BIGINT,
-            field: "msg_id",
-        },
         category: {
             type: Sequelize.ENUM,
             values: sequelize.CATEGORIES_CHOICES,
@@ -117,8 +113,8 @@ module.exports = function (sequelize, DateTypes) {
         },
     }, {});
 
-    db.Watcher.belongsTo(db.Reply, {foreignKey: 'reply_id'});
-    db.Reply.hasOne(db.Watcher, {foreignKey: 'reply_id'});
+    db.Watcher.belongsTo(db.Reply, { foreignKey: 'reply_id' });
+    db.Reply.hasOne(db.Watcher, { foreignKey: 'reply_id' });
 
     db.Alarm = sequelize.define('alarm', {
         warning: {

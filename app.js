@@ -53,7 +53,7 @@ Scraper = new EventScraper(db);
 let startJobDB = sequelize.authenticate().then(async () => {
   return await sequelize.sync({ logging: false });
 }).catch(err => {
-  console.log("Database error:", err);
+  console.error("Database error:", err);
   process.exit(1);
 }).then(() => {
   console.log("Database OK");
@@ -158,7 +158,6 @@ let collectionJob = startJobBot.then(async () => {
 
 async function sendEventList(events = [], chats = [], option = (c) => { }) {
   let promises = [];
-  console.log(events, chats);
   for (const event of events)
     for (const chatID of chats)
       promises.push({
@@ -325,7 +324,7 @@ if (IS_PRODUCTION && APP_URL) {
     if (process.env.KEEP_UP || replier.isActive() || isAlarmHour(italianHour)) {
       console.log(`Keep running: Request ${APP_URL} to avoid being put to sleep`);
       axios.get(APP_URL).catch(
-        error => { console.log("Keep running: Error:", error); }
+        error => { console.error("Keep running: Error:", error); }
       );
     }
   });
@@ -694,24 +693,6 @@ async function cancelFindList(chatID, searchWatchers = true, searchAlarms = true
 }
 
 async function cancelHandler(msg, match) {
-  console.log("annulla called");
-  try {
-    let wid = Number(match[1]);
-    console.log("wid", wid)
-    if (wid) {
-      let single = db.Watcher.findByPk(wid).then(
-        async (r) => {
-          console.log("r", r);
-          await r.destroy();
-          bot.sendMessage(msg.chat.id, "Eliminato", {});
-          return true;
-        }).catch((e) => { console.log(e); return false });
-      console.log("single", single);
-      if (single) return;
-    }
-  } catch (e) {
-    console.error("Error on \/anulla, old part", e);
-  }
   cancelFindList(msg.chat.id).then(async (data) => {
     let ref = replier.message(MESSAGES.CANCEL, msg.chat, data);
     await replier.save(MESSAGES.CANCEL, ref);

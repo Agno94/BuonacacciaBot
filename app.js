@@ -182,11 +182,12 @@ async function sendEventList(events = [], chats = [], option = (c) => { }) {
             chatID: chatID
           }
         }).catch(console.error),
+        eventID: event.id,
       });
   promises = promises.map(
     (job) => job.ref.then(async (ref) => {
       let reply = await job.reply
-      if (!reply) await replier.save(MESSAGES.EVENT, ref, { id: event.id });
+      if (!reply) await replier.save(MESSAGES.EVENT, ref, { id: job.eventID });
       else await replier.add(reply, ref);
     }).then((r) => true, (e) => {
       console.error("Error sending events' list", e.response || e);

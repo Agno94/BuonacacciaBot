@@ -232,7 +232,7 @@ CATEGORIES.LIST = [
         code: 'eg5',
         bccode: '25',
         human: 'Campi di Competenza',
-        bcgridhuman: '??',
+        bcgridhuman: 'Comp',
     }, {
         branca: 2,
         code: 'eg9',
